@@ -2,10 +2,8 @@ import asyncio
 from typing import Any
 
 from course_mcp.config import ROOT_DIR
-from course_mcp.mcp_schemas import (
-    SEARCH_COURSE_FILE_OUTPUT_SCHEMA,
-    SEARCH_COURSE_OUTPUT_SCHEMA,
-)
+from course_mcp.mcp_tools import build_tools
+from course_mcp.services.calendar_service import get_calendar_service
 from course_mcp.services.course_service import CourseService
 from course_mcp.services.file_service import FileService
 from course_mcp.services.pdf_text_extractor import PdfTextExtractor
@@ -59,129 +57,8 @@ async def handle_list_prompts() -> list[types.Prompt]:
 
 @server.list_tools()
 async def handle_list_tools() -> list[types.Tool]:
-    """Describe the course tools and their input schemas to MCP clients."""
-    return [
-        types.Tool(
-            name="list-courses",
-            description=(
-                "List the courses the user is currently taking. "
-                "Agents should use this MCP tool whenever they need to check "
-                "which courses are available."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {},
-            },
-        ),
-        types.Tool(
-            name="list-course-files",
-            description=(
-                "List the files in a course. Agents should call list-courses "
-                "first, then pass one of the returned course titles as "
-                "course_title."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "course_title": {
-                        "type": "string",
-                        "description": (
-                            "The course directory title returned by list-courses."
-                        ),
-                    },
-                },
-                "required": ["course_title"],
-            },
-        ),
-        types.Tool(
-            name="search-course-file",
-            description=(
-                "Search for a literal keyword in one UTF-8 text or PDF file "
-                "inside a course. Matching is case-insensitive."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "course_title": {
-                        "type": "string",
-                        "description": (
-                            "The course directory title returned by list-courses."
-                        ),
-                    },
-                    "file_path": {
-                        "type": "string",
-                        "description": "The path relative to the course directory.",
-                    },
-                    "keyword": {
-                        "type": "string",
-                        "minLength": 1,
-                        "description": "The literal text to search for.",
-                    },
-                    "context_lines": {
-                        "type": "integer",
-                        "minimum": 0,
-                        "maximum": 20,
-                        "default": 3,
-                        "description": (
-                            "Lines of context before and after each match."
-                        ),
-                    },
-                    "max_results": {
-                        "type": "integer",
-                        "minimum": 1,
-                        "maximum": 100,
-                        "default": 20,
-                        "description": "Maximum matching lines to return.",
-                    },
-                },
-                "required": ["course_title", "file_path", "keyword"],
-            },
-            outputSchema=SEARCH_COURSE_FILE_OUTPUT_SCHEMA,
-        ),
-        types.Tool(
-            name="search-course",
-            description=(
-                "Search recursively for a literal keyword in eligible UTF-8 "
-                "text and PDF files within one course."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "course_title": {
-                        "type": "string",
-                        "description": (
-                            "The course directory title returned by list-courses."
-                        ),
-                    },
-                    "keyword": {
-                        "type": "string",
-                        "minLength": 1,
-                        "description": "The literal text to search for.",
-                    },
-                    "context_lines": {
-                        "type": "integer",
-                        "minimum": 0,
-                        "maximum": 20,
-                        "default": 3,
-                        "description": (
-                            "Lines of context before and after each match."
-                        ),
-                    },
-                    "max_results": {
-                        "type": "integer",
-                        "minimum": 1,
-                        "maximum": 100,
-                        "default": 20,
-                        "description": (
-                            "Maximum matching lines returned from each file."
-                        ),
-                    },
-                },
-                "required": ["course_title", "keyword"],
-            },
-            outputSchema=SEARCH_COURSE_OUTPUT_SCHEMA,
-        ),
-    ]
+    """Describe the available tools and their input schemas to MCP clients."""
+    return build_tools()
 
 
 @server.call_tool()
@@ -238,6 +115,15 @@ async def handle_call_tool(
             arguments["keyword"],
             arguments.get("context_lines", 3),
             arguments.get("max_results", 20),
+        )
+
+    if name == "get-upcoming-work":
+        arguments = arguments or {}
+        return await get_calendar_service().get_upcoming_work(
+            start_date=arguments.get("start_date"),
+            end_date=arguments.get("end_date"),
+            query=arguments.get("query"),
+            max_results=arguments.get("max_results", 50),
         )
 
     raise ValueError(f"Unknown tool: {name}")

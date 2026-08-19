@@ -12,12 +12,15 @@ service layer needed to browse course files safely.
 - Restricts file access to paths inside `ROOT_DIR`.
 - Provides a `FileService` for safe file reads.
 - Provides a `CourseService` for course/file listing and searching.
-- Exposes an MCP tool:
+- Reads a private Canvas iCalendar feed without requiring a Canvas access token.
+- Exposes MCP tools:
   - `list-courses`: lists the top-level course directories under `ROOT_DIR`.
   - `list-course-files`: lists the direct files inside a course directory.
   - `search-course-file`: searches one UTF-8 text or text-extractable PDF file
     within a course using case-insensitive literal matching.
   - `search-course`: recursively searches eligible files throughout one course.
+  - `get-upcoming-work`: returns assignments and events from a bounded date
+    range in the Canvas calendar feed.
 
 `search-course-file` requires `course_title`, a course-relative `file_path`, and
 a non-empty `keyword`. It optionally accepts `context_lines` (default 3, maximum
@@ -37,6 +40,16 @@ Both search tools return schema-validated results in MCP `structuredContent`.
 They also include the same result serialized as JSON `TextContent` for clients
 that do not yet consume structured tool output.
 
+`get-upcoming-work` accepts optional `start_date` and `end_date` values in
+`YYYY-MM-DD` format. Both dates are inclusive; without them, the tool returns
+the seven calendar dates beginning today. It also accepts an optional literal
+`query` and `max_results` from 1 through 100. The result identifies whether its
+calendar data is stale and whether it was truncated.
+
+The calendar feed includes dated Canvas assignments and events, but it cannot
+report submission state, grades, or Canvas To Do items. Course hints and item
+types remain unknown unless they can be derived reliably from the feed.
+
 ## Project Layout
 
 ```text
@@ -44,7 +57,13 @@ src/course_mcp/
   server.py              MCP server boundary
   config/                environment/config loading
   mcp_schemas/           MCP JSON Schema contracts
+  mcp_tools/             MCP tool catalog
+  models/
+    calendar_item.py     normalized calendar data
   services/
+    calendar_feed_client.py  bounded private-feed loading and cache metadata
+    icalendar_parser.py  RFC 5545 parsing
+    calendar_service.py  date filtering and result serialization
     file_service.py      safe filesystem access
     pdf_text_extractor.py  page-oriented PDF text extraction
     course_service.py    course-oriented operations
@@ -59,6 +78,8 @@ Create a `.env` file at the project root:
 
 ```bash
 ROOT_DIR="/Users/markseeliger/Desktop/Classes/UMD"
+CANVAS_ICAL_URL="https://umd.instructure.com/feeds/calendars/user_REDACTED.ics"
+CALENDAR_TIMEZONE="America/New_York"
 ```
 
 `ROOT_DIR` must point to an existing directory. Each direct child directory is
@@ -66,6 +87,25 @@ treated as a course.
 
 You can also pass `ROOT_DIR` directly through the environment instead of using
 `.env`.
+
+To obtain the calendar URL, sign in to ELMS-Canvas, open the global
+**Calendar**, select **Calendar Feed** in the sidebar, and copy the URL field.
+The URL is a private credential: do not commit it, paste it into tickets or
+chat, or include it in logs and screenshots. This repository ignores `.env`;
+restrict that file so only your account can read it.
+
+For offline use, configure a downloaded snapshot instead of the URL:
+
+```bash
+CANVAS_ICAL_PATH="/absolute/private/path/calendar.ics"
+CALENDAR_TIMEZONE="America/New_York"
+```
+
+Configure exactly one of `CANVAS_ICAL_URL` and `CANVAS_ICAL_PATH`. Calendar
+configuration is loaded only when `get-upcoming-work` is called, so the
+existing local course tools remain available without it. Live results are
+cached in memory for five minutes; after a refresh failure, a previous result
+may be returned with `stale: true`.
 
 ## Run Locally
 

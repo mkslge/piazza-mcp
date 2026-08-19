@@ -1,4 +1,16 @@
-from course_mcp.config.config import ROOT_DIR
+from course_mcp.config.config import (
+    CANVAS_CALENDAR_HOST,
+    MAX_CALENDAR_BYTES,
+    ROOT_DIR,
+    CalendarConfig,
+    get_calendar_config,
+)
 
 
-__all__ = ["ROOT_DIR"]
+__all__ = [
+    "CANVAS_CALENDAR_HOST",
+    "MAX_CALENDAR_BYTES",
+    "ROOT_DIR",
+    "CalendarConfig",
+    "get_calendar_config",
+]

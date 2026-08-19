@@ -6,6 +6,8 @@ import sys
 import pytest
 import mcp.types as types
 
+from course_mcp.mcp_tools import build_tools
+
 
 def load_server(monkeypatch, root_dir):
     monkeypatch.setenv("ROOT_DIR", str(root_dir))
@@ -28,6 +30,12 @@ def call_registered_tool(server_module, name, arguments):
     )
     handler = server_module.server.request_handlers[types.CallToolRequest]
     return asyncio.run(handler(request)).root
+
+
+def list_registered_tools(server_module):
+    request = types.ListToolsRequest()
+    handler = server_module.server.request_handlers[types.ListToolsRequest]
+    return asyncio.run(handler(request)).root.tools
 
 
 class FakeCourseService:
@@ -88,92 +96,108 @@ class FakeCourseService:
         }
 
 
-def test_list_tools_includes_course_files_tool(monkeypatch, tmp_path):
+class FakeCalendarService:
+    def __init__(self):
+        self.arguments = None
+
+    async def get_upcoming_work(
+        self,
+        start_date=None,
+        end_date=None,
+        query=None,
+        max_results=50,
+    ):
+        self.arguments = (start_date, end_date, query, max_results)
+        return {
+            "source": "canvas_ical",
+            "fetched_at": "2026-08-19T12:00:00Z",
+            "stale": False,
+            "returned_count": 1,
+            "truncated": False,
+            "limitations": [
+                "completion_status_unavailable",
+                "canvas_todo_items_unavailable",
+            ],
+            "items": [
+                {
+                    "uid": "event-one",
+                    "title": "Project 1",
+                    "starts_at": "2026-08-21T23:59:00-04:00",
+                    "ends_at": None,
+                    "all_day": False,
+                    "description": None,
+                    "location": None,
+                    "item_url": None,
+                    "course_hint": None,
+                    "item_kind": "unknown",
+                }
+            ],
+        }
+
+
+def test_registered_server_exposes_tool_catalog(monkeypatch, tmp_path):
     server = load_server(monkeypatch, tmp_path)
 
-    tools = asyncio.run(server.handle_list_tools())
+    tools = list_registered_tools(server)
 
-    tool_names = [tool.name for tool in tools]
-    assert "list-courses" in tool_names
-    assert "list-course-files" in tool_names
+    assert tools == build_tools()
 
-    course_files_tool = next(
-        tool for tool in tools if tool.name == "list-course-files"
+
+def test_get_upcoming_work_returns_result_and_uses_defaults(monkeypatch, tmp_path):
+    server = load_server(monkeypatch, tmp_path)
+    fake_service = FakeCalendarService()
+    monkeypatch.setattr(server, "get_calendar_service", lambda: fake_service)
+
+    result = asyncio.run(server.handle_call_tool("get-upcoming-work", {}))
+
+    assert fake_service.arguments == (None, None, None, 50)
+    assert result["items"][0]["uid"] == "event-one"
+
+
+def test_registered_get_upcoming_work_returns_structured_content(
+    monkeypatch,
+    tmp_path,
+):
+    server = load_server(monkeypatch, tmp_path)
+    fake_service = FakeCalendarService()
+    monkeypatch.setattr(server, "get_calendar_service", lambda: fake_service)
+
+    result = call_registered_tool(
+        server,
+        "get-upcoming-work",
+        {
+            "start_date": "2026-08-20",
+            "end_date": "2026-08-22",
+            "query": "project",
+            "max_results": 10,
+        },
     )
-    assert course_files_tool.inputSchema["required"] == ["course_title"]
 
-
-def test_list_tools_includes_search_course_file_tool(monkeypatch, tmp_path):
-    server = load_server(monkeypatch, tmp_path)
-
-    tools = asyncio.run(server.handle_list_tools())
-
-    search_tool = next(tool for tool in tools if tool.name == "search-course-file")
-    schema = search_tool.inputSchema
-    assert schema["required"] == ["course_title", "file_path", "keyword"]
-    assert schema["properties"]["keyword"]["minLength"] == 1
-    assert schema["properties"]["context_lines"] == {
-        "type": "integer",
-        "minimum": 0,
-        "maximum": 20,
-        "default": 3,
-        "description": "Lines of context before and after each match.",
-    }
-    assert schema["properties"]["max_results"]["minimum"] == 1
-    assert schema["properties"]["max_results"]["maximum"] == 100
-    assert schema["properties"]["max_results"]["default"] == 20
-    output_schema = search_tool.outputSchema
-    assert output_schema is not None
-    assert output_schema["additionalProperties"] is False
-    assert output_schema["required"] == [
-        "course_title",
-        "file_path",
-        "keyword",
-        "match_count",
-        "truncated",
-        "excerpts",
-    ]
-    excerpt_schema = output_schema["properties"]["excerpts"]["items"]
-    assert "page" in excerpt_schema["properties"]
-    assert "page" not in excerpt_schema["required"]
-    assert excerpt_schema["additionalProperties"] is False
-    assert (
-        excerpt_schema["properties"]["lines"]["items"]["additionalProperties"]
-        is False
+    assert result.isError is False
+    assert result.structuredContent["items"][0]["uid"] == "event-one"
+    assert json.loads(result.content[0].text) == result.structuredContent
+    assert fake_service.arguments == (
+        "2026-08-20",
+        "2026-08-22",
+        "project",
+        10,
     )
 
 
-def test_list_tools_includes_search_course_tool(monkeypatch, tmp_path):
+def test_registered_get_upcoming_work_rejects_unknown_argument(
+    monkeypatch,
+    tmp_path,
+):
     server = load_server(monkeypatch, tmp_path)
 
-    tools = asyncio.run(server.handle_list_tools())
+    result = call_registered_tool(
+        server,
+        "get-upcoming-work",
+        {"course": "CMSC430"},
+    )
 
-    search_tool = next(tool for tool in tools if tool.name == "search-course")
-    schema = search_tool.inputSchema
-    assert schema["required"] == ["course_title", "keyword"]
-    assert schema["properties"]["keyword"]["minLength"] == 1
-    assert schema["properties"]["context_lines"]["default"] == 3
-    assert schema["properties"]["context_lines"]["maximum"] == 20
-    assert schema["properties"]["max_results"]["default"] == 20
-    assert schema["properties"]["max_results"]["maximum"] == 100
-    output_schema = search_tool.outputSchema
-    assert output_schema is not None
-    assert output_schema["additionalProperties"] is False
-    assert output_schema["required"] == [
-        "course_title",
-        "keyword",
-        "matching_file_count",
-        "match_count",
-        "files",
-    ]
-    file_schema = output_schema["properties"]["files"]["items"]
-    assert file_schema["additionalProperties"] is False
-    assert file_schema["required"] == [
-        "file_path",
-        "match_count",
-        "truncated",
-        "excerpts",
-    ]
+    assert result.isError is True
+    assert "Input validation error" in result.content[0].text
 
 
 def test_list_course_files_returns_files(monkeypatch, tmp_path):
