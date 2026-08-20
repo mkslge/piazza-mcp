@@ -15,6 +15,37 @@ It should not claim that it can determine submission status, missing work, grade
 
 The reason for this direction is practical: manual personal access-token creation is currently unavailable in the user's Canvas account. We do not yet know whether that is a university-wide policy, a role-specific restriction, or an account configuration issue. Canvas OAuth is still a valid future route, but it requires an institution-issued and enabled developer key, so it is not an immediate self-service solution.
 
+## Current Status and Next Milestone
+
+As of August 19, 2026, the secure feed client, parser, normalized model,
+calendar service, and `get-upcoming-work` MCP tool are implemented. The
+configured UMD feed was reachable but contained zero events when checked, so
+the UMD-specific event conventions needed for reliable course matching and
+item classification are still unknown.
+
+| Phase | Status | Evidence or gate |
+| --- | --- | --- |
+| Phase 0: validate the UMD feed | In progress | Connectivity is validated; representative events and a manual Canvas UI comparison are still required |
+| Phase 1: client and configuration | Complete | Covered by URL, redirect, size, timeout, cache, and redaction tests |
+| Phase 2: parser and models | Complete for observed generic iCalendar shapes | Timed, all-day, floating, recurring-instance, malformed, and bounded-field behavior is covered synthetically |
+| Phase 3: service and MCP tool | Complete | `get-upcoming-work` is implemented with filtering, limits, freshness, and capability metadata |
+| Phase 4: local course matching | Blocked on evidence | Do not infer course identity or item type until representative UMD events establish a stable signal |
+| Phase 5: reassessment | Pending | Begins after representative real-world use |
+
+The immediate implementation milestone is a development-only, aggregate
+calendar profiler. Run it locally with:
+
+```bash
+uv run python scripts/inspect_canvas_calendar.py
+```
+
+It reports event counts, usable/skipped counts, date and time shapes,
+field-presence counts, and coarse URL categories. It must never report event
+titles, descriptions, UIDs, locations, course names, raw URLs, or the feed
+credential. Once the feed contains representative events, compare one week
+manually with the Canvas Calendar UI and use the aggregate results as the
+Phase 4 decision gate.
+
 ## Why the Calendar Feed Is the Best Available Alternative
 
 Canvas officially exposes a Calendar Feed from **Global Navigation → Calendar → Calendar Feed**. The feed contains assignments and events from all of the user's Canvas calendars and can be consumed directly as iCalendar data without automating the browser or reusing an authenticated Canvas session.
@@ -61,17 +92,26 @@ Suggested package layout:
 ```text
 src/course_mcp/
 ├── config/
-│   └── config.py
+│   ├── env.py
+│   ├── filesystem.py
+│   └── calendar.py
 ├── models/
 │   └── calendar_item.py
 ├── services/
-│   ├── calendar_feed_client.py
-│   ├── icalendar_parser.py
-│   ├── calendar_service.py
-│   └── course_context_matcher.py       # add only when matching is implemented
+│   ├── calendar/
+│   │   ├── feed_client.py
+│   │   ├── parser.py
+│   │   ├── profiler.py
+│   │   ├── service.py
+│   │   ├── factory.py
+│   │   └── course_context_matcher.py   # add only after the Phase 4 gate
+│   ├── course/
+│   └── file/
 ├── mcp_schemas/
 │   └── calendar.py
 └── server.py
+scripts/
+└── inspect_canvas_calendar.py
 ```
 
 The transport and parser should be separate. That lets unit tests parse synthetic `.ics` fixtures without making network calls and lets the same service support both a live subscription URL and a downloaded snapshot.
@@ -206,27 +246,28 @@ Calendar failures must not break the existing local-course tools.
 
 ## Implementation Phases
 
-### Phase 0: Validate the UMD feed
+### Phase 0: Validate the UMD feed — in progress
 
-Before writing production code:
+Before implementing course matching:
 
 1. In Canvas, open **Calendar → Calendar Feed**.
-2. Copy the subscription URL or download the `.ics` file.
-3. Keep the URL and sample outside the repository, preferably in a temporary protected location.
-4. Inspect only the field names, hostname, event shapes, time zones, and course-label conventions needed for implementation.
+2. Configure the subscription URL or a downloaded `.ics` file outside the repository.
+3. Run `uv run python scripts/inspect_canvas_calendar.py` and retain only its aggregate output.
+4. Wait until the feed contains representative assignments and events if the event count is zero.
 5. Verify a representative week against the Canvas Calendar UI.
-6. Confirm whether recurring events, canceled events, all-day dates, and direct Canvas item URLs appear.
+6. Use the aggregate field and URL shapes to determine whether a stable course identifier and item-type signal exist.
+7. Confirm whether recurring events, canceled events, all-day dates, and direct Canvas item URLs appear.
 
 This phase resolves the largest implementation unknowns without committing private calendar data.
 
-### Phase 1: Secure feed client and configuration
+### Phase 1: Secure feed client and configuration — complete
 
 - Add mutually exclusive URL/path configuration.
 - Validate and redact the live URL.
 - Implement bounded HTTPS fetching, conditional requests, and in-memory caching.
 - Add explicit errors for missing configuration, invalid host, timeout, oversized response, and malformed response.
 
-### Phase 2: Parser and normalized models
+### Phase 2: Parser and normalized models — complete for generic shapes
 
 - Add the `icalendar` dependency.
 - Parse `VEVENT` components into `CalendarItem` models.
@@ -235,19 +276,25 @@ This phase resolves the largest implementation unknowns without committing priva
 - Sanitize descriptions for bounded MCP output.
 - Add recurrence support based on what is actually observed in the UMD feed.
 
-### Phase 3: Calendar service and MCP tool
+### Phase 3: Calendar service and MCP tool — complete
 
 - Filter by date range, query, optional course hint, and event inclusion.
 - Sort and bound results.
 - Expose `get-upcoming-work` through a thin handler in `server.py`.
 - Include freshness and capability limitations in the response.
 
-### Phase 4: Join calendar items to local course context
+### Phase 4: Join calendar items to local course context — evidence-gated
 
-- Implement exact course-code matching first.
-- Add a minimal explicit mapping only if sample data requires it.
-- Search local course files for a selected calendar item's title or identifiers.
-- Keep unmatched and ambiguous items visible.
+- Proceed only if representative events expose a stable course code, Canvas
+  course identifier, or similarly reliable signal.
+- Implement exact course-code matching first when that signal exists.
+- Add a minimal explicit mapping only if sample data demonstrates that it is
+  required.
+- Keep `course_hint` null when the signal is missing or ambiguous.
+- Defer assignment/event classification unless URL shapes or fields establish
+  a reliable distinction.
+- Search local course files for a selected calendar item's title or identifiers
+  only after conservative matching is verified.
 
 ### Phase 5: Reassess after real use
 
@@ -296,7 +343,11 @@ Use synthetic fixtures only; never commit a real feed.
 
 ### Opt-in integration test
 
-Provide a locally run integration test that reads a user-supplied URL, asserts that the response is parseable, and reports only aggregate counts and field availability. It must never print the URL or raw calendar content.
+Use `uv run python scripts/inspect_canvas_calendar.py` for the opt-in live
+check. It reads the configured URL or snapshot, asserts that the response is
+parseable, and reports only aggregate counts and field availability. Synthetic
+tests verify that private event values, paths, and URL query strings do not
+appear in its serialized output.
 
 ## Definition of Done
 

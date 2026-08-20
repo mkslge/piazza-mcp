@@ -3,8 +3,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
-from course_mcp.config import ROOT_DIR
-from course_mcp.services.pdf_text_extractor import PdfTextExtractor
+from .pdf_extractor import PdfTextExtractor
 
 COURSE_SEARCH_MAX_DEPTH = 5
 COURSE_SEARCH_EXCLUDED_DIRS = frozenset(
@@ -360,58 +359,3 @@ class FileService:
             excerpts.append(excerpt)
 
         return excerpts
-
-
-pdf_text_extractor = PdfTextExtractor()
-file_service = FileService(ROOT_DIR, pdf_text_extractor)
-
-
-def get_contents(
-    relative_path: str,
-    start_line: int | None = None,
-    end_line: int | None = None,
-) -> str:
-    """Read text through the module's configured file service."""
-    return file_service.get_contents(relative_path, start_line, end_line)
-
-
-def list_files(relative_path: str = "") -> list[str]:
-    """List files through the module's configured file service."""
-    return file_service.list_files(relative_path)
-
-
-def list_dirs(relative_path: str = "") -> list[str]:
-    """List directories through the module's configured file service."""
-    return file_service.list_dirs(relative_path)
-
-
-def search_file(
-    course_title: str,
-    file_path: str,
-    keyword: str,
-    context_lines: int = 3,
-    max_results: int = 20,
-) -> dict[str, Any]:
-    """Search a course file through the module's configured file service."""
-    return file_service.search_file(
-        course_title,
-        file_path,
-        keyword,
-        context_lines,
-        max_results,
-    )
-
-
-def search_course(
-    course_title: str,
-    keyword: str,
-    context_lines: int = 3,
-    max_results: int = 20,
-) -> dict[str, Any]:
-    """Search a course recursively through the configured file service."""
-    return file_service.search_course(
-        course_title,
-        keyword,
-        context_lines,
-        max_results,
-    )

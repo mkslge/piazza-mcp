@@ -2,8 +2,8 @@ from types import SimpleNamespace
 
 import pytest
 
-import course_mcp.services.pdf_text_extractor as extractor_module
-from course_mcp.services.pdf_text_extractor import (
+import course_mcp.services.file.pdf_extractor as extractor_module
+from course_mcp.services.file import (
     PdfExtractionError,
     PdfTextExtractor,
 )

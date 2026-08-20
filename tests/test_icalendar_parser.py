@@ -4,9 +4,15 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from course_mcp.services.icalendar_parser import (
+from course_mcp.services.calendar import (
     CalendarParseError,
     ICalendarParser,
+)
+from course_mcp.models.calendar_item import (
+    MAX_DESCRIPTION_LENGTH,
+    MAX_LOCATION_LENGTH,
+    MAX_TITLE_LENGTH,
+    MAX_UID_LENGTH,
 )
 
 
@@ -16,9 +22,12 @@ FIXTURE = Path(__file__).parent / "fixtures" / "calendar.ics"
 def test_parser_normalizes_timed_all_day_and_recurring_events():
     parser = ICalendarParser(ZoneInfo("America/New_York"))
 
-    items = parser.parse(FIXTURE.read_bytes())
+    result = parser.parse(FIXTURE.read_bytes())
+    items = result.items
 
     assert len(items) == 3
+    assert result.total_event_count == 4
+    assert result.skipped_event_count == 1
     timed, all_day, recurring = items
     assert timed.uid == "timed-project"
     assert timed.starts_at == datetime(2026, 8, 20, 3, 59, tzinfo=timezone.utc)
@@ -29,6 +38,8 @@ def test_parser_normalizes_timed_all_day_and_recurring_events():
     )
     assert timed.course_hint is None
     assert timed.item_kind == "unknown"
+    assert timed.sequence == 2
+    assert timed.dtstamp == datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
 
     assert all_day.starts_at == date(2026, 8, 21)
     assert all_day.ends_at == date(2026, 8, 22)
@@ -58,7 +69,7 @@ END:VEVENT
 END:VCALENDAR
 """
 
-    item = parser.parse(content)[0]
+    item = parser.parse(content).items[0]
 
     assert item.starts_at == datetime(
         2026,
@@ -83,7 +94,7 @@ END:VEVENT
 END:VCALENDAR
 """
 
-    item = parser.parse(content)[0]
+    item = parser.parse(content).items[0]
 
     assert item.item_url is None
 
@@ -93,3 +104,67 @@ def test_parser_rejects_malformed_calendar():
 
     with pytest.raises(CalendarParseError, match="malformed"):
         parser.parse(b"not an iCalendar document")
+
+
+def test_parser_accepts_calendar_with_no_events():
+    parser = ICalendarParser(ZoneInfo("America/New_York"))
+    content = b"""BEGIN:VCALENDAR
+VERSION:2.0
+END:VCALENDAR
+"""
+
+    result = parser.parse(content)
+
+    assert result.items == ()
+    assert result.total_event_count == 0
+    assert result.skipped_event_count == 0
+
+
+def test_parser_rejects_nonempty_calendar_when_no_events_are_usable():
+    parser = ICalendarParser(ZoneInfo("America/New_York"))
+    content = b"""BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID:no-start
+SUMMARY:No start
+END:VEVENT
+END:VCALENDAR
+"""
+
+    with pytest.raises(CalendarParseError, match="no usable events"):
+        parser.parse(content)
+
+
+def test_parser_bounds_display_fields_and_hashes_oversized_uid():
+    parser = ICalendarParser(ZoneInfo("America/New_York"))
+    oversized_uid = "u" * (MAX_UID_LENGTH + 1)
+    oversized_title = "Title   " + "t" * MAX_TITLE_LENGTH
+    oversized_description = "d" * (MAX_DESCRIPTION_LENGTH + 1)
+    oversized_location = "l" * (MAX_LOCATION_LENGTH + 1)
+    oversized_url = (
+        "https://umd.instructure.com/courses/1?value=" + "x" * 2_100
+    )
+    content = f"""BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID:{oversized_uid}
+DTSTART:20260822T100000Z
+SUMMARY:{oversized_title}
+DESCRIPTION:{oversized_description}
+LOCATION:{oversized_location}
+URL:{oversized_url}
+END:VEVENT
+END:VCALENDAR
+""".encode()
+
+    first = parser.parse(content).items[0]
+    second = parser.parse(content).items[0]
+
+    assert first.uid == second.uid
+    assert first.uid.startswith("sha256:")
+    assert len(first.uid) <= MAX_UID_LENGTH
+    assert len(first.title) == MAX_TITLE_LENGTH
+    assert "  " not in first.title
+    assert len(first.description) == MAX_DESCRIPTION_LENGTH
+    assert len(first.location) == MAX_LOCATION_LENGTH
+    assert first.item_url is None

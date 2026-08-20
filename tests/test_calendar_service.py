@@ -4,13 +4,13 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from course_mcp.models.calendar_item import CalendarItem
-from course_mcp.services import calendar_service as calendar_service_module
-from course_mcp.services.calendar_feed_client import (
+from course_mcp.models.calendar_item import CalendarItem, CalendarParseResult
+from course_mcp.services.calendar import (
     CalendarFeedError,
     CalendarFeedPayload,
+    CalendarParseError,
+    CalendarService,
 )
-from course_mcp.services.calendar_service import CalendarService
 
 
 EASTERN = ZoneInfo("America/New_York")
@@ -31,12 +31,40 @@ class FakeFeedClient:
 
 
 class FakeParser:
-    def __init__(self, items):
+    def __init__(self, items, skipped_event_count=0):
         self.items = tuple(items)
+        self.skipped_event_count = skipped_event_count
 
     def parse(self, content):
         assert content == b"calendar"
-        return self.items
+        return CalendarParseResult(
+            items=self.items,
+            total_event_count=len(self.items) + self.skipped_event_count,
+            skipped_event_count=self.skipped_event_count,
+        )
+
+
+class SequencedParser:
+    def __init__(self, results):
+        self.results = list(results)
+
+    def parse(self, content):
+        assert content == b"calendar"
+        result = self.results.pop(0)
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+
+class FakeClock:
+    def __init__(self):
+        self.now = 0.0
+
+    def __call__(self):
+        return self.now
+
+    def advance(self, seconds):
+        self.now += seconds
 
 
 def item(
@@ -47,6 +75,10 @@ def item(
     ends_at=None,
     all_day=False,
     description=None,
+    sequence=0,
+    last_modified=None,
+    dtstamp=None,
+    recurrence_id=None,
 ):
     return CalendarItem(
         uid=uid,
@@ -55,6 +87,10 @@ def item(
         ends_at=ends_at,
         all_day=all_day,
         description=description,
+        sequence=sequence,
+        last_modified=last_modified,
+        dtstamp=dtstamp,
+        recurrence_id=recurrence_id,
     )
 
 
@@ -67,13 +103,21 @@ def payload(*, not_modified=False):
     )
 
 
-def make_service(items, results=None):
+def make_service(
+    items,
+    results=None,
+    *,
+    skipped_event_count=0,
+    parser=None,
+    monotonic_provider=None,
+):
     client = FakeFeedClient(results or [payload()])
     service = CalendarService(
         client,
-        FakeParser(items),
+        parser or FakeParser(items, skipped_event_count),
         EASTERN,
         today_provider=lambda: date(2026, 8, 19),
+        monotonic_provider=monotonic_provider,
     )
     return service, client
 
@@ -93,6 +137,7 @@ def test_service_defaults_to_seven_dates_and_sorts_items():
     assert result["returned_count"] == 2
     assert result["fetched_at"] == "2026-08-19T12:00:00Z"
     assert result["stale"] is False
+    assert result["skipped_event_count"] == 0
 
 
 def test_service_includes_overlapping_timed_and_all_day_events():
@@ -156,6 +201,101 @@ def test_service_filters_query_deduplicates_and_truncates():
     assert result["items"][0]["title"] == "Project Alpha"
 
 
+def test_service_prefers_higher_sequence_regardless_of_feed_order():
+    service, _ = make_service(
+        [
+            item(
+                "duplicate",
+                "Current deadline",
+                datetime(2026, 8, 20, 12, 0, tzinfo=EASTERN),
+                sequence=2,
+            ),
+            item(
+                "duplicate",
+                "Old deadline",
+                datetime(2026, 8, 20, 10, 0, tzinfo=EASTERN),
+                sequence=1,
+            ),
+        ]
+    )
+
+    result = asyncio.run(service.get_upcoming_work())
+
+    assert result["items"][0]["title"] == "Current deadline"
+
+
+def test_service_uses_revision_timestamps_after_sequence():
+    newer = datetime(2026, 8, 18, 12, 0, tzinfo=timezone.utc)
+    older = datetime(2026, 8, 17, 12, 0, tzinfo=timezone.utc)
+    service, _ = make_service(
+        [
+            item(
+                "last-modified",
+                "New last modified",
+                datetime(2026, 8, 20, 12, 0, tzinfo=EASTERN),
+                last_modified=newer,
+                dtstamp=older,
+            ),
+            item(
+                "last-modified",
+                "Old last modified",
+                datetime(2026, 8, 20, 10, 0, tzinfo=EASTERN),
+                last_modified=older,
+                dtstamp=newer,
+            ),
+            item(
+                "dtstamp",
+                "New stamp",
+                datetime(2026, 8, 21, 12, 0, tzinfo=EASTERN),
+                dtstamp=newer,
+            ),
+            item(
+                "dtstamp",
+                "Old stamp",
+                datetime(2026, 8, 21, 10, 0, tzinfo=EASTERN),
+                dtstamp=older,
+            ),
+        ]
+    )
+
+    result = asyncio.run(service.get_upcoming_work())
+
+    assert [entry["title"] for entry in result["items"]] == [
+        "New last modified",
+        "New stamp",
+    ]
+
+
+def test_service_uses_feed_order_only_for_exact_revision_ties():
+    service, _ = make_service(
+        [
+            item(
+                "same",
+                "First",
+                datetime(2026, 8, 20, 10, 0, tzinfo=EASTERN),
+            ),
+            item(
+                "same",
+                "Second",
+                datetime(2026, 8, 20, 11, 0, tzinfo=EASTERN),
+            ),
+            item(
+                "same",
+                "Other recurrence",
+                datetime(2026, 8, 21, 11, 0, tzinfo=EASTERN),
+                recurrence_id="2026-08-21T11:00:00-04:00",
+            ),
+        ]
+    )
+
+    result = asyncio.run(service.get_upcoming_work())
+
+    assert [entry["title"] for entry in result["items"]] == [
+        "Second",
+        "Other recurrence",
+    ]
+
+
 @pytest.mark.parametrize(
     ("arguments", "message"),
     [
@@ -180,30 +320,117 @@ def test_service_validates_arguments(arguments, message):
         asyncio.run(service.get_upcoming_work(**arguments))
 
 
-def test_service_uses_cache_and_handles_not_modified_response(monkeypatch):
+def test_service_uses_cache_without_refetching_inside_ttl():
+    service, client = make_service(
+        [item("one", "One", datetime(2026, 8, 20, tzinfo=EASTERN))]
+    )
+
+    first = asyncio.run(service.get_upcoming_work())
+    second = asyncio.run(service.get_upcoming_work())
+
+    assert client.call_count == 1
+    assert second == first
+
+
+def test_service_refreshes_after_ttl_and_handles_not_modified():
+    clock = FakeClock()
     service, client = make_service(
         [item("one", "One", datetime(2026, 8, 20, tzinfo=EASTERN))],
         [payload(), payload(not_modified=True)],
+        skipped_event_count=2,
+        monotonic_provider=clock,
     )
-    monkeypatch.setattr(calendar_service_module, "CACHE_SECONDS", 0)
 
     asyncio.run(service.get_upcoming_work())
+    clock.advance(301)
     result = asyncio.run(service.get_upcoming_work())
 
     assert client.call_count == 2
     assert result["items"][0]["uid"] == "one"
     assert result["stale"] is False
+    assert result["skipped_event_count"] == 2
 
 
-def test_service_returns_marked_stale_cache_after_refresh_failure(monkeypatch):
+def test_service_returns_marked_stale_cache_after_refresh_failure():
+    clock = FakeClock()
     service, _ = make_service(
         [item("one", "One", datetime(2026, 8, 20, tzinfo=EASTERN))],
         [payload(), CalendarFeedError("temporary failure")],
+        skipped_event_count=1,
+        monotonic_provider=clock,
     )
-    monkeypatch.setattr(calendar_service_module, "CACHE_SECONDS", 0)
 
     asyncio.run(service.get_upcoming_work())
+    clock.advance(301)
     result = asyncio.run(service.get_upcoming_work())
 
     assert result["stale"] is True
     assert result["items"][0]["uid"] == "one"
+    assert result["skipped_event_count"] == 1
+
+
+def test_service_rejects_first_load_not_modified_response():
+    service, _ = make_service([], [payload(not_modified=True)])
+
+    with pytest.raises(CalendarFeedError, match="returned no content"):
+        asyncio.run(service.get_upcoming_work())
+
+
+def test_service_uses_stale_cache_after_parser_failure():
+    clock = FakeClock()
+    parsed = CalendarParseResult(
+        items=(item("one", "One", datetime(2026, 8, 20, tzinfo=EASTERN)),),
+        total_event_count=2,
+        skipped_event_count=1,
+    )
+    parser = SequencedParser(
+        [
+            parsed,
+            CalendarParseError("Canvas calendar feed contains no usable events"),
+        ]
+    )
+    service, _ = make_service(
+        [],
+        [payload(), payload()],
+        parser=parser,
+        monotonic_provider=clock,
+    )
+
+    asyncio.run(service.get_upcoming_work())
+    clock.advance(301)
+    result = asyncio.run(service.get_upcoming_work())
+
+    assert result["stale"] is True
+    assert result["skipped_event_count"] == 1
+
+
+def test_service_propagates_parser_failure_without_cache():
+    parser = SequencedParser(
+        [CalendarParseError("Canvas calendar feed contains no usable events")]
+    )
+    service, _ = make_service([], parser=parser)
+
+    with pytest.raises(CalendarParseError, match="no usable events"):
+        asyncio.run(service.get_upcoming_work())
+
+
+def test_not_modified_response_clears_stale_marker():
+    clock = FakeClock()
+    service, _ = make_service(
+        [item("one", "One", datetime(2026, 8, 20, tzinfo=EASTERN))],
+        [
+            payload(),
+            CalendarFeedError("temporary failure"),
+            payload(not_modified=True),
+        ],
+        monotonic_provider=clock,
+    )
+
+    asyncio.run(service.get_upcoming_work())
+    clock.advance(301)
+    stale = asyncio.run(service.get_upcoming_work())
+    clock.advance(301)
+    current = asyncio.run(service.get_upcoming_work())
+
+    assert stale["stale"] is True
+    assert current["stale"] is False

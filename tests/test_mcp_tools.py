@@ -98,6 +98,22 @@ def test_catalog_includes_get_upcoming_work_tool():
     }
     assert calendar_tool.outputSchema["additionalProperties"] is False
     assert calendar_tool.outputSchema["properties"]["items"]["maxItems"] == 100
+    assert calendar_tool.outputSchema["properties"]["skipped_event_count"] == {
+        "type": "integer",
+        "minimum": 0,
+    }
+    item_schema = calendar_tool.outputSchema["properties"]["items"]["items"]
+    assert item_schema["properties"]["starts_at"]["anyOf"][0]["format"] == (
+        "date"
+    )
+    assert item_schema["properties"]["starts_at"]["anyOf"][1]["format"] == (
+        "date-time"
+    )
+    assert item_schema["properties"]["uid"]["maxLength"] == 512
+    assert item_schema["properties"]["title"]["maxLength"] == 500
+    assert calendar_tool.outputSchema["properties"]["returned_count"][
+        "maximum"
+    ] == 100
 
 
 def test_complete_catalog_contains_course_and_calendar_tools():

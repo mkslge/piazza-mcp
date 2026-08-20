@@ -1,12 +1,9 @@
 import asyncio
 from typing import Any
 
-from course_mcp.config import ROOT_DIR
 from course_mcp.mcp_tools import build_tools
-from course_mcp.services.calendar_service import get_calendar_service
-from course_mcp.services.course_service import CourseService
-from course_mcp.services.file_service import FileService
-from course_mcp.services.pdf_text_extractor import PdfTextExtractor
+from course_mcp.services.calendar import get_calendar_service
+from course_mcp.services.course import get_course_service
 from mcp.server.models import InitializationOptions
 import mcp.types as types
 from mcp.server import NotificationOptions, Server
@@ -14,10 +11,6 @@ from pydantic import AnyUrl
 import mcp.server.stdio
 
 notes: dict[str, str] = {}
-
-pdf_text_extractor = PdfTextExtractor()
-file_service = FileService(ROOT_DIR, pdf_text_extractor)
-course_service = CourseService(file_service)
 
 server = Server("course-mcp")
 
@@ -70,7 +63,7 @@ async def handle_call_tool(
 ]:
     """Dispatch an MCP tool call to the appropriate course service operation."""
     if name == "list-courses":
-        courses = course_service.get_courses()
+        courses = get_course_service().get_courses()
         return [
             types.TextContent(
                 type="text",
@@ -82,7 +75,7 @@ async def handle_call_tool(
         if arguments is None or "course_title" not in arguments:
             raise ValueError("Missing required argument: course_title")
 
-        files = course_service.get_files(arguments["course_title"])
+        files = get_course_service().get_files(arguments["course_title"])
         return [
             types.TextContent(
                 type="text",
@@ -96,7 +89,7 @@ async def handle_call_tool(
             if arguments is None or argument not in arguments:
                 raise ValueError(f"Missing required argument: {argument}")
 
-        return course_service.search_file(
+        return get_course_service().search_file(
             arguments["course_title"],
             arguments["file_path"],
             arguments["keyword"],
@@ -110,7 +103,7 @@ async def handle_call_tool(
             if arguments is None or argument not in arguments:
                 raise ValueError(f"Missing required argument: {argument}")
 
-        return course_service.search_course(
+        return get_course_service().search_course(
             arguments["course_title"],
             arguments["keyword"],
             arguments.get("context_lines", 3),

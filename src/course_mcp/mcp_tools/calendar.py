@@ -9,7 +9,7 @@ def build_calendar_tools() -> list[types.Tool]:
         types.Tool(
             name="get-upcoming-work",
             description=(
-                "List assignments and events from the user's private Canvas "
+                "List assignments and events from the user's Canvas "
                 "calendar feed. This cannot determine submission status, "
                 "grades, or Canvas To Do items."
             ),

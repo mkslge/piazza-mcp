@@ -4,17 +4,16 @@ import time as monotonic_time
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
-from course_mcp.config import get_calendar_config
 from course_mcp.models.calendar_item import (
     CalendarItem,
     CalendarSnapshot,
     CalendarValue,
 )
-from course_mcp.services.calendar_feed_client import (
+from .feed_client import (
     CalendarFeedClient,
     CalendarFeedError,
 )
-from course_mcp.services.icalendar_parser import (
+from .parser import (
     CalendarParseError,
     ICalendarParser,
 )
@@ -36,6 +35,7 @@ class CalendarService:
         calendar_timezone: ZoneInfo,
         *,
         today_provider: Callable[[], date] | None = None,
+        monotonic_provider: Callable[[], float] | None = None,
     ):
         """Create a calendar query service from injected source components."""
         self.feed_client = feed_client
@@ -44,6 +44,7 @@ class CalendarService:
         self.today_provider = today_provider or (
             lambda: datetime.now(self.calendar_timezone).date()
         )
+        self.monotonic_provider = monotonic_provider or monotonic_time.monotonic
         self._cached_snapshot: CalendarSnapshot | None = None
         self._cache_loaded_at: float | None = None
 
@@ -94,6 +95,7 @@ class CalendarService:
             "source": snapshot.source,
             "fetched_at": self._datetime_text(snapshot.fetched_at),
             "stale": snapshot.stale,
+            "skipped_event_count": snapshot.skipped_event_count,
             "returned_count": len(returned_items),
             "truncated": truncated,
             "limitations": list(LIMITATIONS),
@@ -101,7 +103,7 @@ class CalendarService:
         }
 
     async def _get_snapshot(self) -> CalendarSnapshot:
-        now = monotonic_time.monotonic()
+        now = self.monotonic_provider()
         if (
             self._cached_snapshot is not None
             and self._cache_loaded_at is not None
@@ -126,10 +128,12 @@ class CalendarService:
                     raise CalendarFeedError(
                         "Canvas calendar feed returned no content"
                     )
+                parse_result = self.parser.parse(payload.content)
                 snapshot = CalendarSnapshot(
-                    items=self.parser.parse(payload.content),
+                    items=parse_result.items,
                     source=payload.source,
                     fetched_at=payload.fetched_at,
+                    skipped_event_count=parse_result.skipped_event_count,
                 )
         except (CalendarFeedError, CalendarParseError):
             if self._cached_snapshot is None:
@@ -198,12 +202,30 @@ class CalendarService:
         )
         return any(query in value.casefold() for value in values if value)
 
-    @staticmethod
-    def _deduplicate(items: tuple[CalendarItem, ...]) -> list[CalendarItem]:
+    def _deduplicate(self, items: tuple[CalendarItem, ...]) -> list[CalendarItem]:
         unique: dict[tuple[str, str | None], CalendarItem] = {}
         for item in items:
-            unique[(item.uid, item.recurrence_id)] = item
+            key = (item.uid, item.recurrence_id)
+            existing = unique.get(key)
+            if existing is None or self._revision_key(item) >= self._revision_key(
+                existing
+            ):
+                unique[key] = item
         return list(unique.values())
+
+    def _revision_key(self, item: CalendarItem) -> tuple[int, datetime, datetime]:
+        return (
+            item.sequence,
+            self._revision_timestamp(item.last_modified),
+            self._revision_timestamp(item.dtstamp),
+        )
+
+    def _revision_timestamp(self, value: datetime | None) -> datetime:
+        if value is None:
+            return datetime.min.replace(tzinfo=timezone.utc)
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=self.calendar_timezone)
+        return value.astimezone(timezone.utc)
 
     def _sort_key(self, item: CalendarItem) -> tuple[datetime, str, str]:
         return (
@@ -233,20 +255,3 @@ class CalendarService:
     def _datetime_text(value: datetime) -> str:
         normalized = value.astimezone(timezone.utc).isoformat()
         return normalized.replace("+00:00", "Z")
-
-
-calendar_service: CalendarService | None = None
-
-
-def get_calendar_service() -> CalendarService:
-    """Return the lazily initialized configured calendar service."""
-    global calendar_service
-
-    if calendar_service is None:
-        config = get_calendar_config()
-        calendar_service = CalendarService(
-            CalendarFeedClient(config),
-            ICalendarParser(config.timezone),
-            config.timezone,
-        )
-    return calendar_service

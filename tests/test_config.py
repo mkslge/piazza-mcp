@@ -1,65 +1,59 @@
-import importlib
-import sys
 from zoneinfo import ZoneInfo
 
 import pytest
 
+import course_mcp.config.calendar as calendar_config_module
+import course_mcp.config.filesystem as filesystem_config_module
 
-def reload_config(monkeypatch, root_dir=None, root_dir_fallback=None):
-    if root_dir is None:
-        monkeypatch.delenv("ROOT_DIR", raising=False)
-    else:
-        monkeypatch.setenv("ROOT_DIR", str(root_dir))
 
-    if root_dir_fallback is None:
-        monkeypatch.delenv("ROOT_DIR_", raising=False)
-    else:
-        monkeypatch.setenv("ROOT_DIR_", str(root_dir_fallback))
+CONFIG_ENV_VARS = (
+    "ROOT_DIR",
+    "ROOT_DIR_",
+    "CANVAS_ICAL_URL",
+    "CANVAS_ICAL_PATH",
+    "CALENDAR_TIMEZONE",
+)
 
-    sys.modules.pop("course_mcp.config", None)
-    sys.modules.pop("course_mcp.config.config", None)
 
-    return importlib.import_module("course_mcp.config.config")
+def isolate_config(monkeypatch):
+    """Prevent tests from reading private values from the project dotenv file."""
+    monkeypatch.setattr(calendar_config_module, "load_project_env", lambda: None)
+    monkeypatch.setattr(filesystem_config_module, "load_project_env", lambda: None)
+    for name in CONFIG_ENV_VARS:
+        monkeypatch.delenv(name, raising=False)
 
 
 def test_root_dir_uses_root_dir_environment_value(monkeypatch, tmp_path):
-    config = reload_config(monkeypatch, root_dir=tmp_path)
+    isolate_config(monkeypatch)
+    monkeypatch.setenv("ROOT_DIR", str(tmp_path))
 
-    assert config.ROOT_DIR == tmp_path.resolve()
+    assert filesystem_config_module.get_root_dir() == tmp_path.resolve()
 
 
 def test_root_dir_falls_back_to_root_dir_underscore(monkeypatch, tmp_path):
-    config = reload_config(monkeypatch, root_dir=tmp_path)
-    monkeypatch.delenv("ROOT_DIR", raising=False)
+    isolate_config(monkeypatch)
     monkeypatch.setenv("ROOT_DIR_", str(tmp_path))
-    monkeypatch.setattr(config, "_load_env_file", lambda env_path: None)
 
-    assert config._get_root_dir() == tmp_path.resolve()
+    assert filesystem_config_module.get_root_dir() == tmp_path.resolve()
 
 
 def test_root_dir_must_exist(monkeypatch, tmp_path):
+    isolate_config(monkeypatch)
     missing_path = tmp_path / "missing"
+    monkeypatch.setenv("ROOT_DIR", str(missing_path))
 
     with pytest.raises(RuntimeError, match="ROOT_DIR does not exist"):
-        reload_config(monkeypatch, root_dir=missing_path)
+        filesystem_config_module.get_root_dir()
 
 
-def prepare_calendar_config(config, monkeypatch):
-    monkeypatch.setattr(config, "_load_env_file", lambda env_path: None)
-    monkeypatch.delenv("CANVAS_ICAL_URL", raising=False)
-    monkeypatch.delenv("CANVAS_ICAL_PATH", raising=False)
-    monkeypatch.delenv("CALENDAR_TIMEZONE", raising=False)
-
-
-def test_calendar_config_normalizes_webcal_url(monkeypatch, tmp_path):
-    config = reload_config(monkeypatch, root_dir=tmp_path)
-    prepare_calendar_config(config, monkeypatch)
+def test_calendar_config_normalizes_webcal_url(monkeypatch):
+    isolate_config(monkeypatch)
     monkeypatch.setenv(
         "CANVAS_ICAL_URL",
         "webcal://umd.instructure.com/feeds/calendars/user_test.ics",
     )
 
-    calendar_config = config.get_calendar_config()
+    calendar_config = calendar_config_module.get_calendar_config()
 
     assert calendar_config.url == (
         "https://umd.instructure.com/feeds/calendars/user_test.ics"
@@ -69,14 +63,13 @@ def test_calendar_config_normalizes_webcal_url(monkeypatch, tmp_path):
 
 
 def test_calendar_config_accepts_local_snapshot(monkeypatch, tmp_path):
-    config = reload_config(monkeypatch, root_dir=tmp_path)
-    prepare_calendar_config(config, monkeypatch)
+    isolate_config(monkeypatch)
     snapshot = tmp_path / "calendar.ics"
     snapshot.write_text("BEGIN:VCALENDAR\nEND:VCALENDAR\n")
     monkeypatch.setenv("CANVAS_ICAL_PATH", str(snapshot))
     monkeypatch.setenv("CALENDAR_TIMEZONE", "America/Los_Angeles")
 
-    calendar_config = config.get_calendar_config()
+    calendar_config = calendar_config_module.get_calendar_config()
 
     assert calendar_config.url is None
     assert calendar_config.path == snapshot.resolve()
@@ -84,17 +77,16 @@ def test_calendar_config_accepts_local_snapshot(monkeypatch, tmp_path):
 
 
 def test_calendar_config_is_optional_until_requested(monkeypatch, tmp_path):
-    config = reload_config(monkeypatch, root_dir=tmp_path)
-    prepare_calendar_config(config, monkeypatch)
+    isolate_config(monkeypatch)
+    monkeypatch.setenv("ROOT_DIR", str(tmp_path))
 
-    assert config.ROOT_DIR == tmp_path.resolve()
+    assert filesystem_config_module.get_root_dir() == tmp_path.resolve()
     with pytest.raises(RuntimeError, match="Canvas calendar is not configured"):
-        config.get_calendar_config()
+        calendar_config_module.get_calendar_config()
 
 
 def test_calendar_config_rejects_multiple_sources(monkeypatch, tmp_path):
-    config = reload_config(monkeypatch, root_dir=tmp_path)
-    prepare_calendar_config(config, monkeypatch)
+    isolate_config(monkeypatch)
     snapshot = tmp_path / "calendar.ics"
     snapshot.write_text("BEGIN:VCALENDAR\nEND:VCALENDAR\n")
     monkeypatch.setenv(
@@ -104,7 +96,7 @@ def test_calendar_config_rejects_multiple_sources(monkeypatch, tmp_path):
     monkeypatch.setenv("CANVAS_ICAL_PATH", str(snapshot))
 
     with pytest.raises(RuntimeError, match="Configure only one"):
-        config.get_calendar_config()
+        calendar_config_module.get_calendar_config()
 
 
 @pytest.mark.parametrize(
@@ -113,20 +105,22 @@ def test_calendar_config_rejects_multiple_sources(monkeypatch, tmp_path):
         "http://umd.instructure.com/feeds/calendars/user_test.ics",
         "https://example.com/feeds/calendars/user_test.ics",
         "https://umd.instructure.com/courses/123",
+        "https://user:password@umd.instructure.com/feeds/calendars/user_test.ics",
+        "https://umd.instructure.com:invalid/feeds/calendars/user_test.ics",
     ],
 )
-def test_calendar_config_rejects_invalid_live_url(monkeypatch, tmp_path, url):
-    config = reload_config(monkeypatch, root_dir=tmp_path)
-    prepare_calendar_config(config, monkeypatch)
+def test_calendar_config_rejects_invalid_live_url(monkeypatch, url):
+    isolate_config(monkeypatch)
     monkeypatch.setenv("CANVAS_ICAL_URL", url)
 
-    with pytest.raises(RuntimeError, match="CANVAS_ICAL_URL"):
-        config.get_calendar_config()
+    with pytest.raises(RuntimeError, match="CANVAS_ICAL_URL") as error:
+        calendar_config_module.get_calendar_config()
+
+    assert url not in str(error.value)
 
 
-def test_calendar_config_rejects_invalid_timezone(monkeypatch, tmp_path):
-    config = reload_config(monkeypatch, root_dir=tmp_path)
-    prepare_calendar_config(config, monkeypatch)
+def test_calendar_config_rejects_invalid_timezone(monkeypatch):
+    isolate_config(monkeypatch)
     monkeypatch.setenv(
         "CANVAS_ICAL_URL",
         "https://umd.instructure.com/feeds/calendars/user_test.ics",
@@ -134,4 +128,29 @@ def test_calendar_config_rejects_invalid_timezone(monkeypatch, tmp_path):
     monkeypatch.setenv("CALENDAR_TIMEZONE", "not-a-timezone")
 
     with pytest.raises(RuntimeError, match="valid IANA timezone"):
-        config.get_calendar_config()
+        calendar_config_module.get_calendar_config()
+
+
+def test_calendar_config_rejects_missing_snapshot_without_exposing_path(
+    monkeypatch,
+    tmp_path,
+):
+    isolate_config(monkeypatch)
+    missing_path = tmp_path / "private-calendar-name.ics"
+    monkeypatch.setenv("CANVAS_ICAL_PATH", str(missing_path))
+
+    with pytest.raises(RuntimeError, match="existing file") as error:
+        calendar_config_module.get_calendar_config()
+
+    assert str(missing_path) not in str(error.value)
+
+
+def test_calendar_config_rejects_oversized_snapshot(monkeypatch, tmp_path):
+    isolate_config(monkeypatch)
+    monkeypatch.setattr(calendar_config_module, "MAX_CALENDAR_BYTES", 5)
+    snapshot = tmp_path / "calendar.ics"
+    snapshot.write_bytes(b"123456")
+    monkeypatch.setenv("CANVAS_ICAL_PATH", str(snapshot))
+
+    with pytest.raises(RuntimeError, match="exceeds the 5 MB size limit"):
+        calendar_config_module.get_calendar_config()

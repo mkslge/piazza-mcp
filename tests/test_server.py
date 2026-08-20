@@ -7,15 +7,13 @@ import pytest
 import mcp.types as types
 
 from course_mcp.mcp_tools import build_tools
+from course_mcp.services.calendar import CalendarFeedError, CalendarParseError
 
 
 def load_server(monkeypatch, root_dir):
     monkeypatch.setenv("ROOT_DIR", str(root_dir))
     monkeypatch.delenv("ROOT_DIR_", raising=False)
 
-    sys.modules.pop("course_mcp.config", None)
-    sys.modules.pop("course_mcp.config.config", None)
-    sys.modules.pop("course_mcp.services.file_service", None)
     sys.modules.pop("course_mcp.server", None)
 
     return importlib.import_module("course_mcp.server")
@@ -112,6 +110,7 @@ class FakeCalendarService:
             "source": "canvas_ical",
             "fetched_at": "2026-08-19T12:00:00Z",
             "stale": False,
+            "skipped_event_count": 0,
             "returned_count": 1,
             "truncated": False,
             "limitations": [
@@ -174,6 +173,7 @@ def test_registered_get_upcoming_work_returns_structured_content(
     )
 
     assert result.isError is False
+    assert result.structuredContent["skipped_event_count"] == 0
     assert result.structuredContent["items"][0]["uid"] == "event-one"
     assert json.loads(result.content[0].text) == result.structuredContent
     assert fake_service.arguments == (
@@ -182,6 +182,32 @@ def test_registered_get_upcoming_work_returns_structured_content(
         "project",
         10,
     )
+
+
+def test_registered_get_upcoming_work_accepts_date_only_item(
+    monkeypatch,
+    tmp_path,
+):
+    server = load_server(monkeypatch, tmp_path)
+    fake_service = FakeCalendarService()
+    original = fake_service.get_upcoming_work
+
+    async def all_day_result(**arguments):
+        result = await original(**arguments)
+        result["skipped_event_count"] = 1
+        result["items"][0]["starts_at"] = "2026-08-21"
+        result["items"][0]["ends_at"] = "2026-08-22"
+        result["items"][0]["all_day"] = True
+        return result
+
+    fake_service.get_upcoming_work = all_day_result
+    monkeypatch.setattr(server, "get_calendar_service", lambda: fake_service)
+
+    result = call_registered_tool(server, "get-upcoming-work", {})
+
+    assert result.isError is False
+    assert result.structuredContent["skipped_event_count"] == 1
+    assert result.structuredContent["items"][0]["starts_at"] == "2026-08-21"
 
 
 def test_registered_get_upcoming_work_rejects_unknown_argument(
@@ -200,9 +226,117 @@ def test_registered_get_upcoming_work_rejects_unknown_argument(
     assert "Input validation error" in result.content[0].text
 
 
+def test_registered_get_upcoming_work_rejects_invalid_temporal_output(
+    monkeypatch,
+    tmp_path,
+):
+    server = load_server(monkeypatch, tmp_path)
+    fake_service = FakeCalendarService()
+
+    original = fake_service.get_upcoming_work
+
+    async def malformed_result(**arguments):
+        result = await original(**arguments)
+        result["items"][0]["starts_at"] = "not-a-date"
+        return result
+
+    fake_service.get_upcoming_work = malformed_result
+    monkeypatch.setattr(server, "get_calendar_service", lambda: fake_service)
+
+    result = call_registered_tool(server, "get-upcoming-work", {})
+
+    assert result.isError is True
+    assert result.structuredContent is None
+    assert "Output validation error" in result.content[0].text
+
+
+def test_registered_get_upcoming_work_rejects_oversized_output(
+    monkeypatch,
+    tmp_path,
+):
+    server = load_server(monkeypatch, tmp_path)
+    fake_service = FakeCalendarService()
+
+    original = fake_service.get_upcoming_work
+
+    async def oversized_result(**arguments):
+        result = await original(**arguments)
+        result["items"][0]["title"] = "t" * 501
+        return result
+
+    fake_service.get_upcoming_work = oversized_result
+    monkeypatch.setattr(server, "get_calendar_service", lambda: fake_service)
+
+    result = call_registered_tool(server, "get-upcoming-work", {})
+
+    assert result.isError is True
+    assert result.structuredContent is None
+    assert "Output validation error" in result.content[0].text
+
+
+def test_registered_get_upcoming_work_reports_missing_configuration(
+    monkeypatch,
+    tmp_path,
+):
+    server = load_server(monkeypatch, tmp_path)
+
+    def missing_service():
+        raise RuntimeError(
+            "Canvas calendar is not configured; set CANVAS_ICAL_URL or "
+            "CANVAS_ICAL_PATH"
+        )
+
+    monkeypatch.setattr(server, "get_calendar_service", missing_service)
+
+    result = call_registered_tool(server, "get-upcoming-work", {})
+
+    assert result.isError is True
+    assert result.structuredContent is None
+    assert result.content[0].text == (
+        "Canvas calendar is not configured; set CANVAS_ICAL_URL or "
+        "CANVAS_ICAL_PATH"
+    )
+
+
+@pytest.mark.parametrize(
+    "service_error",
+    [
+        CalendarFeedError("Unable to load Canvas calendar feed"),
+        CalendarParseError("Canvas calendar feed contains no usable events"),
+    ],
+)
+def test_registered_get_upcoming_work_reports_safe_calendar_errors(
+    monkeypatch,
+    tmp_path,
+    service_error,
+):
+    server = load_server(monkeypatch, tmp_path)
+
+    class FailingCalendarService:
+        async def get_upcoming_work(self, **arguments):
+            raise service_error
+
+    monkeypatch.setattr(
+        server,
+        "get_calendar_service",
+        lambda: FailingCalendarService(),
+    )
+
+    result = call_registered_tool(server, "get-upcoming-work", {})
+
+    assert result.isError is True
+    assert result.structuredContent is None
+    assert result.content[0].text == str(service_error)
+    assert "user_test_secret" not in result.content[0].text
+
+
 def test_list_course_files_returns_files(monkeypatch, tmp_path):
     server = load_server(monkeypatch, tmp_path)
-    monkeypatch.setattr(server, "course_service", FakeCourseService())
+    monkeypatch.setattr(
+        server,
+        "get_course_service",
+        lambda: FakeCourseService(),
+    )
 
     result = asyncio.run(
         server.handle_call_tool(
@@ -224,7 +358,7 @@ def test_list_course_files_requires_course_title(monkeypatch, tmp_path):
 def test_search_course_file_returns_result_and_uses_defaults(monkeypatch, tmp_path):
     server = load_server(monkeypatch, tmp_path)
     fake_service = FakeCourseService()
-    monkeypatch.setattr(server, "course_service", fake_service)
+    monkeypatch.setattr(server, "get_course_service", lambda: fake_service)
 
     result = asyncio.run(
         server.handle_call_tool(
@@ -278,7 +412,7 @@ def test_search_course_file_requires_arguments(
 def test_search_course_returns_result_and_uses_defaults(monkeypatch, tmp_path):
     server = load_server(monkeypatch, tmp_path)
     fake_service = FakeCourseService()
-    monkeypatch.setattr(server, "course_service", fake_service)
+    monkeypatch.setattr(server, "get_course_service", lambda: fake_service)
 
     result = asyncio.run(
         server.handle_call_tool(
@@ -355,7 +489,11 @@ def test_registered_search_tools_return_structured_and_compatibility_content(
     expected,
 ):
     server = load_server(monkeypatch, tmp_path)
-    monkeypatch.setattr(server, "course_service", FakeCourseService())
+    monkeypatch.setattr(
+        server,
+        "get_course_service",
+        lambda: FakeCourseService(),
+    )
 
     result = call_registered_tool(server, tool_name, arguments)
 
@@ -392,7 +530,7 @@ def test_registered_search_tool_reports_service_errors(monkeypatch, tmp_path):
         raise ValueError("Course is not available")
 
     fake_service.search_file = fail_search
-    monkeypatch.setattr(server, "course_service", fake_service)
+    monkeypatch.setattr(server, "get_course_service", lambda: fake_service)
 
     result = call_registered_tool(
         server,
@@ -420,7 +558,7 @@ def test_registered_search_tool_rejects_invalid_structured_output(
         return {"course_title": "CMSC132"}
 
     fake_service.search_file = malformed_search
-    monkeypatch.setattr(server, "course_service", fake_service)
+    monkeypatch.setattr(server, "get_course_service", lambda: fake_service)
 
     result = call_registered_tool(
         server,

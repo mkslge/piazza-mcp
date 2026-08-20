@@ -1,20 +1,19 @@
 import importlib
-import sys
 
 import pytest
 
-from course_mcp.services.pdf_text_extractor import PdfExtractionError
+from course_mcp.config import filesystem as filesystem_config_module
+from course_mcp.services.file import factory as file_factory_module
+from course_mcp.services.file import PdfExtractionError
 
 
 def load_file_service(monkeypatch, root_dir):
     monkeypatch.setenv("ROOT_DIR", str(root_dir))
     monkeypatch.delenv("ROOT_DIR_", raising=False)
+    monkeypatch.setattr(filesystem_config_module, "load_project_env", lambda: None)
+    monkeypatch.setattr(file_factory_module, "_file_service", None)
 
-    sys.modules.pop("course_mcp.config", None)
-    sys.modules.pop("course_mcp.config.config", None)
-    sys.modules.pop("course_mcp.services.file_service", None)
-
-    return importlib.import_module("course_mcp.services.file_service")
+    return importlib.import_module("course_mcp.services.file")
 
 
 def test_resolve_path_stays_inside_root(monkeypatch, tmp_path):

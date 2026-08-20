@@ -44,7 +44,10 @@ that do not yet consume structured tool output.
 `YYYY-MM-DD` format. Both dates are inclusive; without them, the tool returns
 the seven calendar dates beginning today. It also accepts an optional literal
 `query` and `max_results` from 1 through 100. The result identifies whether its
-calendar data is stale and whether it was truncated.
+calendar data is stale, whether it was truncated, and how many calendar events
+could not be normalized through `skipped_event_count`. If a non-empty feed has
+no usable events, the tool returns stale cached data when available or a clear
+error instead of reporting a fresh empty calendar.
 
 The calendar feed includes dated Canvas assignments and events, but it cannot
 report submission state, grades, or Canvas To Do items. Course hints and item
@@ -55,19 +58,28 @@ types remain unknown unless they can be derived reliably from the feed.
 ```text
 src/course_mcp/
   server.py              MCP server boundary
-  config/                environment/config loading
+  config/
+    env.py               shared lazy .env loading
+    filesystem.py        course-root configuration
+    calendar.py          Canvas calendar configuration
   mcp_schemas/           MCP JSON Schema contracts
   mcp_tools/             MCP tool catalog
   models/
     calendar_item.py     normalized calendar data
   services/
-    calendar_feed_client.py  bounded private-feed loading and cache metadata
-    icalendar_parser.py  RFC 5545 parsing
-    calendar_service.py  date filtering and result serialization
-    file_service.py      safe filesystem access
-    pdf_text_extractor.py  page-oriented PDF text extraction
-    course_service.py    course-oriented operations
-  models/                simple data models
+    calendar/
+      feed_client.py     bounded private-feed loading and cache metadata
+      parser.py          RFC 5545 parsing
+      profiler.py        aggregate-only feed-shape diagnostics
+      service.py         date filtering and result serialization
+      factory.py         lazy configured calendar construction
+    course/
+      service.py         course-oriented operations
+      factory.py         lazy course/file composition
+    file/
+      service.py         safe filesystem access
+      pdf_extractor.py   page-oriented PDF text extraction
+      factory.py         lazy configured file construction
 tests/                   pytest tests
 skills/                  project-specific agent skills
 ```
@@ -83,7 +95,8 @@ CALENDAR_TIMEZONE="America/New_York"
 ```
 
 `ROOT_DIR` must point to an existing directory. Each direct child directory is
-treated as a course.
+treated as a course. It is loaded only when a course-backed tool is called;
+importing the server does not require course or calendar configuration.
 
 You can also pass `ROOT_DIR` directly through the environment instead of using
 `.env`.
@@ -144,6 +157,18 @@ If you change MCP tools, restart Codex or start a new Codex session so the tool
 list is reloaded.
 
 ## Development
+
+Inspect the configured Canvas calendar's structure without printing event
+values or the private feed URL:
+
+```bash
+uv run python scripts/inspect_canvas_calendar.py
+```
+
+The command reports only aggregate counts for usable/skipped events, date and
+time shapes, selected field presence, and coarse URL types. A zero event count
+means the feed is valid but does not yet provide representative data for course
+matching; it is not evidence that the calendar integration is broken.
 
 Run the test suite:
 
