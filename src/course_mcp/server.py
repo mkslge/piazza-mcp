@@ -4,6 +4,7 @@ from typing import Any
 from course_mcp.mcp_tools import build_tools
 from course_mcp.services.calendar import get_calendar_service
 from course_mcp.services.course import get_course_service
+from course_mcp.services.piazza import get_piazza_service
 from mcp.server.models import InitializationOptions
 import mcp.types as types
 from mcp.server import NotificationOptions, Server
@@ -117,6 +118,39 @@ async def handle_call_tool(
             end_date=arguments.get("end_date"),
             query=arguments.get("query"),
             max_results=arguments.get("max_results", 50),
+        )
+
+    if name == "list-piazza-courses":
+        return await get_piazza_service().list_courses()
+
+    if name == "list-piazza-posts":
+        if arguments is None or "course_id" not in arguments:
+            raise ValueError("Missing required argument: course_id")
+        return await get_piazza_service().list_posts(
+            arguments["course_id"],
+            arguments.get("limit", 10),
+            arguments.get("offset", 0),
+        )
+
+    if name == "get-piazza-post":
+        required_arguments = ("course_id", "post_number")
+        for argument in required_arguments:
+            if arguments is None or argument not in arguments:
+                raise ValueError(f"Missing required argument: {argument}")
+        return await get_piazza_service().get_post(
+            arguments["course_id"],
+            arguments["post_number"],
+        )
+
+    if name == "search-piazza-posts":
+        required_arguments = ("course_id", "query")
+        for argument in required_arguments:
+            if arguments is None or argument not in arguments:
+                raise ValueError(f"Missing required argument: {argument}")
+        return await get_piazza_service().search_posts(
+            arguments["course_id"],
+            arguments["query"],
+            arguments.get("max_results", 10),
         )
 
     raise ValueError(f"Unknown tool: {name}")

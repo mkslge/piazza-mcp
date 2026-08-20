@@ -8,10 +8,12 @@ import pytest
 
 import course_mcp.config.calendar as calendar_config_module
 import course_mcp.config.filesystem as filesystem_config_module
+import course_mcp.config.piazza as piazza_config_module
 from course_mcp.config import CalendarConfig
 from course_mcp.services.calendar import factory as calendar_factory
 from course_mcp.services.course import factory as course_factory
 from course_mcp.services.file import factory as file_factory
+from course_mcp.services.piazza import factory as piazza_factory
 
 
 CONFIG_ENV_VARS = (
@@ -20,6 +22,9 @@ CONFIG_ENV_VARS = (
     "CANVAS_ICAL_URL",
     "CANVAS_ICAL_PATH",
     "CALENDAR_TIMEZONE",
+    "PIAZZA_EMAIL",
+    "PIAZZA_PASSWORD",
+    "PIAZZA_COURSES",
 )
 
 
@@ -27,6 +32,7 @@ def clear_service_config(monkeypatch):
     """Disable project dotenv loading and clear every service variable."""
     monkeypatch.setattr(calendar_config_module, "load_project_env", lambda: None)
     monkeypatch.setattr(filesystem_config_module, "load_project_env", lambda: None)
+    monkeypatch.setattr(piazza_config_module, "load_project_env", lambda: None)
     for name in CONFIG_ENV_VARS:
         monkeypatch.delenv(name, raising=False)
 
@@ -51,6 +57,7 @@ config_env.PROJECT_ENV_PATH = ForbiddenEnvPath()
 import course_mcp.services.calendar
 import course_mcp.services.course
 import course_mcp.services.file
+import course_mcp.services.piazza
 import course_mcp.server
 """
     result = subprocess.run(
@@ -79,6 +86,14 @@ def test_calendar_factory_reports_missing_source_only_when_requested(monkeypatch
 
     with pytest.raises(RuntimeError, match="Canvas calendar is not configured"):
         calendar_factory.get_calendar_service()
+
+
+def test_piazza_factory_reports_missing_credentials_only_when_requested(monkeypatch):
+    clear_service_config(monkeypatch)
+    monkeypatch.setattr(piazza_factory, "_piazza_service", None)
+
+    with pytest.raises(RuntimeError, match="Missing PIAZZA_EMAIL"):
+        piazza_factory.get_piazza_service()
 
 
 def test_file_factory_reuses_one_instance(monkeypatch, tmp_path):
@@ -131,3 +146,18 @@ def test_course_helpers_delegate_through_lazy_factory(monkeypatch):
     monkeypatch.setattr(course_factory, "get_course_service", lambda: fake_service)
 
     assert course_factory.get_courses() == ["CMSC132"]
+
+
+def test_piazza_factory_reuses_one_instance(monkeypatch):
+    configured = piazza_config_module.PiazzaConfig(
+        email="student@example.edu",
+        password="private-password",
+        courses={"abc123": "CMSC 132"},
+    )
+    monkeypatch.setattr(piazza_factory, "_piazza_service", None)
+    monkeypatch.setattr(piazza_factory, "get_piazza_config", lambda: configured)
+
+    first = piazza_factory.get_piazza_service()
+    second = piazza_factory.get_piazza_service()
+
+    assert first is second

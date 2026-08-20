@@ -1,4 +1,9 @@
-from course_mcp.mcp_tools import build_calendar_tools, build_course_tools, build_tools
+from course_mcp.mcp_tools import (
+    build_calendar_tools,
+    build_course_tools,
+    build_piazza_tools,
+    build_tools,
+)
 
 
 def test_catalog_includes_course_files_tool():
@@ -116,7 +121,37 @@ def test_catalog_includes_get_upcoming_work_tool():
     ] == 100
 
 
-def test_complete_catalog_contains_course_and_calendar_tools():
+def test_complete_catalog_contains_all_service_tools():
     tools = build_tools()
 
-    assert tools == [*build_course_tools(), *build_calendar_tools()]
+    assert tools == [
+        *build_course_tools(),
+        *build_calendar_tools(),
+        *build_piazza_tools(),
+    ]
+
+
+def test_piazza_tools_are_read_only_bounded_and_schema_backed():
+    tools = build_piazza_tools()
+
+    assert [tool.name for tool in tools] == [
+        "list-piazza-courses",
+        "list-piazza-posts",
+        "get-piazza-post",
+        "search-piazza-posts",
+    ]
+    for tool in tools:
+        assert tool.annotations.readOnlyHint is True
+        assert tool.annotations.destructiveHint is False
+        assert tool.annotations.idempotentHint is True
+        assert tool.annotations.openWorldHint is True
+        assert tool.inputSchema["additionalProperties"] is False
+        assert tool.outputSchema["additionalProperties"] is False
+
+    list_posts = tools[1]
+    assert list_posts.inputSchema["properties"]["limit"]["maximum"] == 25
+    assert list_posts.outputSchema["properties"]["posts"]["maxItems"] == 25
+
+    search = tools[3]
+    assert search.inputSchema["properties"]["query"]["maxLength"] == 200
+    assert search.inputSchema["properties"]["max_results"]["maximum"] == 25

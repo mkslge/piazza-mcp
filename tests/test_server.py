@@ -134,6 +134,105 @@ class FakeCalendarService:
         }
 
 
+class FakePiazzaService:
+    def __init__(self):
+        self.arguments = None
+
+    @staticmethod
+    def metadata():
+        return {
+            "source": "piazza",
+            "content_trust": "untrusted_user_generated",
+            "fetched_at": "2026-08-19T12:00:00Z",
+            "stale": False,
+            "limitations": [
+                "unofficial_internal_api",
+                "write_actions_unavailable",
+                "attachments_unavailable",
+            ],
+        }
+
+    async def list_courses(self):
+        self.arguments = ("courses",)
+        return {
+            **self.metadata(),
+            "returned_count": 1,
+            "courses": [
+                {
+                    "course_id": "abc123",
+                    "name": "CMSC 132",
+                    "course_number": "CMSC 132",
+                    "term": "Fall 2026",
+                    "is_ta": False,
+                }
+            ],
+        }
+
+    async def list_posts(self, course_id, limit=10, offset=0):
+        self.arguments = ("list", course_id, limit, offset)
+        return {
+            **self.metadata(),
+            "course_id": course_id,
+            "returned_count": 1,
+            "skipped_post_count": 0,
+            "truncated": False,
+            "posts": [self.summary(course_id)],
+        }
+
+    async def get_post(self, course_id, post_number):
+        self.arguments = ("get", course_id, post_number)
+        return {
+            **self.metadata(),
+            "thread": {
+                "post_number": post_number,
+                "course_id": course_id,
+                "kind": "question",
+                "subject": "Exam question",
+                "body": "When is the exam?",
+                "folders": ["exam"],
+                "created_at": "2026-08-19T10:00:00Z",
+                "updated_at": None,
+                "resolved": False,
+                "instructor_answer": None,
+                "student_answer": None,
+                "followups": [],
+                "source_url": (
+                    f"https://piazza.com/class/{course_id}/post/{post_number}"
+                ),
+                "truncated": False,
+                "skipped_child_count": 0,
+            },
+        }
+
+    async def search_posts(self, course_id, query, max_results=10):
+        self.arguments = ("search", course_id, query, max_results)
+        return {
+            **self.metadata(),
+            "course_id": course_id,
+            "query": query,
+            "returned_count": 1,
+            "skipped_post_count": 0,
+            "truncated": False,
+            "posts": [self.summary(course_id)],
+        }
+
+    @staticmethod
+    def summary(course_id):
+        return {
+            "post_number": 7,
+            "course_id": course_id,
+            "kind": "question",
+            "subject": "Exam question",
+            "snippet": "When is the exam?",
+            "folders": ["exam"],
+            "created_at": "2026-08-19T10:00:00Z",
+            "updated_at": None,
+            "resolved": False,
+            "source_url": f"https://piazza.com/class/{course_id}/post/7",
+            "truncated": False,
+        }
+
+
 def test_registered_server_exposes_tool_catalog(monkeypatch, tmp_path):
     server = load_server(monkeypatch, tmp_path)
 
@@ -182,6 +281,76 @@ def test_registered_get_upcoming_work_returns_structured_content(
         "project",
         10,
     )
+
+
+def test_piazza_handlers_dispatch_defaults(monkeypatch, tmp_path):
+    server = load_server(monkeypatch, tmp_path)
+    fake_service = FakePiazzaService()
+    monkeypatch.setattr(server, "get_piazza_service", lambda: fake_service)
+
+    courses = asyncio.run(server.handle_call_tool("list-piazza-courses", {}))
+    posts = asyncio.run(
+        server.handle_call_tool(
+            "list-piazza-posts",
+            {"course_id": "abc123"},
+        )
+    )
+    thread = asyncio.run(
+        server.handle_call_tool(
+            "get-piazza-post",
+            {"course_id": "abc123", "post_number": 7},
+        )
+    )
+    search = asyncio.run(
+        server.handle_call_tool(
+            "search-piazza-posts",
+            {"course_id": "abc123", "query": "exam"},
+        )
+    )
+
+    assert courses["courses"][0]["course_id"] == "abc123"
+    assert posts["posts"][0]["post_number"] == 7
+    assert thread["thread"]["post_number"] == 7
+    assert search["query"] == "exam"
+    assert fake_service.arguments == ("search", "abc123", "exam", 10)
+
+
+def test_registered_piazza_tool_returns_structured_content(monkeypatch, tmp_path):
+    server = load_server(monkeypatch, tmp_path)
+    fake_service = FakePiazzaService()
+    monkeypatch.setattr(server, "get_piazza_service", lambda: fake_service)
+
+    result = call_registered_tool(
+        server,
+        "list-piazza-posts",
+        {"course_id": "abc123", "limit": 5, "offset": 2},
+    )
+
+    assert result.isError is False
+    assert result.structuredContent["posts"][0]["post_number"] == 7
+    assert json.loads(result.content[0].text) == result.structuredContent
+    assert fake_service.arguments == ("list", "abc123", 5, 2)
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "arguments", "missing"),
+    [
+        ("list-piazza-posts", {}, "course_id"),
+        ("get-piazza-post", {"course_id": "abc123"}, "post_number"),
+        ("search-piazza-posts", {"course_id": "abc123"}, "query"),
+    ],
+)
+def test_piazza_handlers_require_arguments(
+    monkeypatch,
+    tmp_path,
+    tool_name,
+    arguments,
+    missing,
+):
+    server = load_server(monkeypatch, tmp_path)
+
+    with pytest.raises(ValueError, match=f"Missing required argument: {missing}"):
+        asyncio.run(server.handle_call_tool(tool_name, arguments))
 
 
 def test_registered_get_upcoming_work_accepts_date_only_item(
