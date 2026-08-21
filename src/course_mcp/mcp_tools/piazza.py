@@ -42,7 +42,13 @@ def build_piazza_tools() -> list[types.Tool]:
             name="list-piazza-posts",
             description=(
                 "List bounded recent post summaries from one configured "
-                f"Piazza course. {_UNTRUSTED_CONTENT_WARNING}"
+                "Piazza course. The maximum limit is 25; never request a "
+                "larger value. For recent posts, request one page. To "
+                "retrieve all posts, start at offset 0 and request one page "
+                "at a time, increasing offset by limit only when the previous "
+                "response has truncated=true. Stop when truncated=false; do "
+                "not prefetch speculative offsets in parallel. "
+                f"{_UNTRUSTED_CONTENT_WARNING}"
             ),
             inputSchema={
                 "type": "object",
@@ -59,12 +65,19 @@ def build_piazza_tools() -> list[types.Tool]:
                         "minimum": 1,
                         "maximum": 25,
                         "default": 10,
+                        "description": (
+                            "Posts per page. Maximum 25; never request more."
+                        ),
                     },
                     "offset": {
                         "type": "integer",
                         "minimum": 0,
                         "maximum": 500,
                         "default": 0,
+                        "description": (
+                            "Start at 0. For additional pages, add limit only "
+                            "after the previous response has truncated=true."
+                        ),
                     },
                 },
                 "required": ["course_id"],

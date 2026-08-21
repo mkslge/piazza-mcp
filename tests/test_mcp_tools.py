@@ -151,6 +151,16 @@ def test_piazza_tools_are_read_only_bounded_and_schema_backed():
     list_posts = tools[1]
     assert list_posts.inputSchema["properties"]["limit"]["maximum"] == 25
     assert list_posts.outputSchema["properties"]["posts"]["maxItems"] == 25
+    assert "maximum limit is 25" in list_posts.description
+    assert "request one page at a time" in list_posts.description
+    assert "Stop when truncated=false" in list_posts.description
+    assert "do not prefetch speculative offsets" in list_posts.description
+    assert "Maximum 25" in list_posts.inputSchema["properties"]["limit"][
+        "description"
+    ]
+    assert "add limit only after" in list_posts.inputSchema["properties"][
+        "offset"
+    ]["description"]
 
     search = tools[3]
     assert search.inputSchema["properties"]["query"]["maxLength"] == 200

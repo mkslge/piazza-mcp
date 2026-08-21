@@ -381,7 +381,7 @@ requires-dist = [
     { name = "beautifulsoup4", specifier = ">=4.13,<5" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "icalendar", specifier = ">=7.2.2" },
-    { name = "mcp", specifier = ">=1.28.1" },
+    { name = "mcp", specifier = ">=1.28.1,<2" },
     { name = "piazza-api", specifier = ">=0.16.0,<0.17.0" },
     { name = "pypdf", specifier = ">=6.14.2" },
 ]
