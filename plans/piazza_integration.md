@@ -41,17 +41,19 @@ through unpublished interfaces and prohibit scraping without permission.
 
 ## Current Status
 
-As of August 19, 2026, this is a research and implementation plan only. No
-Piazza dependency, credentials, service, or MCP tool has been added to the
-project.
+As of August 20, 2026, the user explicitly selected the community-built
+`piazza-api` transport for personal experimentation. The dependency, lazy
+configuration, timeout-bound client, normalized models, aggregate-only
+profiler, service, schemas, four read-only MCP tools, and offline tests are
+implemented. No live Piazza request or credentialed smoke test has been run.
 
 | Phase | Status | Completion gate |
 | --- | --- | --- |
-| Phase 0: choose an authorized access route | Pending | Permission or an explicit documented risk decision exists |
-| Phase 1: transport spike and shape inspection | Pending | Authentication, timeouts, errors, and observed response shapes are understood |
-| Phase 2: configuration, models, and normalization | Pending | Synthetic fixtures cover all observed post shapes and bounds |
-| Phase 3: client and service | Pending | Allowlisting, retries, caching, and output limits pass unit tests |
-| Phase 4: MCP schemas and handlers | Pending | Four read-only tools pass schema and dispatch tests |
+| Phase 0: choose an authorized access route | Complete for the current experiment | The user explicitly accepted the unofficial community transport; official permission remains preferable |
+| Phase 1: transport spike and shape inspection | Implemented, live validation pending | Client and privacy-safe inspector exist; real authentication and shapes remain unverified |
+| Phase 2: configuration, models, and normalization | Complete for synthetic shapes | Synthetic tests cover known post, answer, follow-up, HTML, missing-history, and bound behavior |
+| Phase 3: client and service | Complete offline | Allowlisting, retries, caching, stale fallback, and output limits pass fake-client tests |
+| Phase 4: MCP schemas and handlers | Complete offline | Four read-only tools pass schema and dispatch tests |
 | Phase 5: live validation and documentation | Pending | Bounded calls match the Piazza UI without exposing private data |
 
 ## Proposed Architecture

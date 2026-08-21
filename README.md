@@ -1,10 +1,10 @@
 # course-mcp
 
-`course-mcp` is a local Python MCP server for referencing course files from a
-configured classes directory.
+`course-mcp` is a local Python MCP server for referencing course files,
+upcoming Canvas calendar work, and configured Piazza discussions.
 
-The project is currently focused on listing available courses and building the
-service layer needed to browse course files safely.
+The project combines safe local-file access with bounded, read-only course data
+from configured external sources.
 
 ## Current Features
 
@@ -13,6 +13,8 @@ service layer needed to browse course files safely.
 - Provides a `FileService` for safe file reads.
 - Provides a `CourseService` for course/file listing and searching.
 - Reads a private Canvas iCalendar feed without requiring a Canvas access token.
+- Reads configured Piazza discussions through the community-built, unofficial
+  `piazza-api` package.
 - Exposes MCP tools:
   - `list-courses`: lists the top-level course directories under `ROOT_DIR`.
   - `list-course-files`: lists the direct files inside a course directory.
@@ -21,6 +23,13 @@ service layer needed to browse course files safely.
   - `search-course`: recursively searches eligible files throughout one course.
   - `get-upcoming-work`: returns assignments and events from a bounded date
     range in the Canvas calendar feed.
+  - `list-piazza-courses`: lists configured Piazza courses accessible to the
+    authenticated account.
+  - `list-piazza-posts`: returns bounded recent post summaries without loading
+    every full thread.
+  - `get-piazza-post`: returns one bounded normalized Piazza thread.
+  - `search-piazza-posts`: uses Piazza's feed search and returns bounded
+    summaries.
 
 `search-course-file` requires `course_title`, a course-relative `file_path`, and
 a non-empty `keyword`. It optionally accepts `context_lines` (default 3, maximum
@@ -53,6 +62,16 @@ The calendar feed includes dated Canvas assignments and events, but it cannot
 report submission state, grades, or Canvas To Do items. Course hints and item
 types remain unknown unless they can be derived reliably from the feed.
 
+Piazza tools are read-only and restricted to the course IDs explicitly listed
+in `PIAZZA_COURSES`. Post text is returned as bounded plain text and identified
+as untrusted user-generated content. The tools do not post, answer, edit,
+download attachments, expose rosters, or perform instructor operations.
+
+The Piazza integration depends on unpublished internal endpoints. It is useful
+for personal experimentation but is not an official Piazza API, may break when
+Piazza changes its website, and may be subject to Piazza or institutional usage
+rules. Keep request limits conservative and do not use it for bulk collection.
+
 ## Project Layout
 
 ```text
@@ -62,10 +81,12 @@ src/course_mcp/
     env.py               shared lazy .env loading
     filesystem.py        course-root configuration
     calendar.py          Canvas calendar configuration
+    piazza.py            Piazza credentials and course allowlist
   mcp_schemas/           MCP JSON Schema contracts
   mcp_tools/             MCP tool catalog
   models/
     calendar_item.py     normalized calendar data
+    piazza.py            bounded Piazza domain models
   services/
     calendar/
       feed_client.py     bounded private-feed loading and cache metadata
@@ -80,6 +101,12 @@ src/course_mcp/
       service.py         safe filesystem access
       pdf_extractor.py   page-oriented PDF text extraction
       factory.py         lazy configured file construction
+    piazza/
+      client.py          timeout-bound adapter around unofficial piazza-api
+      normalizer.py      HTML cleanup and response normalization
+      profiler.py        aggregate-only response-shape diagnostics
+      service.py         allowlisting, limits, caching, and serialization
+      factory.py         lazy configured Piazza construction
 tests/                   pytest tests
 skills/                  project-specific agent skills
 ```
@@ -92,6 +119,9 @@ Create a `.env` file at the project root:
 ROOT_DIR="/Users/markseeliger/Desktop/Classes/UMD"
 CANVAS_ICAL_URL="https://umd.instructure.com/feeds/calendars/user_REDACTED.ics"
 CALENDAR_TIMEZONE="America/New_York"
+PIAZZA_EMAIL="student@example.edu"
+PIAZZA_PASSWORD="replace-with-your-password"
+PIAZZA_COURSES='{"abc123":"CMSC 132","xyz789":"CMSC 216"}'
 ```
 
 `ROOT_DIR` must point to an existing directory. Each direct child directory is
@@ -119,6 +149,18 @@ configuration is loaded only when `get-upcoming-work` is called, so the
 existing local course tools remain available without it. Live results are
 cached in memory for five minutes; after a refresh failure, a previous result
 may be returned with `stale: true`.
+
+Piazza configuration is also lazy: the server and unrelated tools work without
+Piazza variables. `PIAZZA_COURSES` is a JSON mapping from Piazza course IDs to
+the names the agent should display. A course ID is the value after `/class/` in
+a Piazza course URL. Every course-scoped call is rejected unless its ID appears
+in this mapping, and `list-piazza-courses` returns only configured courses that
+the authenticated account can access.
+
+Store the Piazza password only in a private local environment or MCP process
+configuration. Never commit `.env`, paste credentials into prompts, or include
+them in logs. Accounts that require institution-only SSO may not support the
+email/password flow used by the unofficial package.
 
 ## Run Locally
 
@@ -169,6 +211,19 @@ The command reports only aggregate counts for usable/skipped events, date and
 time shapes, selected field presence, and coarse URL types. A zero event count
 means the feed is valid but does not yet provide representative data for course
 matching; it is not evidence that the calendar integration is broken.
+
+After knowingly selecting the unofficial Piazza transport, inspect a bounded
+sample's structure without printing course IDs, post numbers, titles, bodies,
+names, or cookies:
+
+```bash
+uv run python scripts/inspect_piazza_shapes.py
+```
+
+The inspector loads at most five feed summaries and one full thread from the
+first configured course. Its output contains aggregate key/type/depth counts
+only. It still makes live calls to unpublished Piazza endpoints, so do not run
+it unless that access route is acceptable for your account.
 
 Run the test suite:
 

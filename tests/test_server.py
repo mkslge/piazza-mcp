@@ -2,12 +2,15 @@ import asyncio
 import importlib
 import json
 import sys
+from types import MappingProxyType
 
 import pytest
 import mcp.types as types
 
+from course_mcp.config import PiazzaConfig
 from course_mcp.mcp_tools import build_tools
 from course_mcp.services.calendar import CalendarFeedError, CalendarParseError
+from course_mcp.services.piazza import PiazzaNormalizer, PiazzaService
 
 
 def load_server(monkeypatch, root_dir):
@@ -330,6 +333,86 @@ def test_registered_piazza_tool_returns_structured_content(monkeypatch, tmp_path
     assert result.structuredContent["posts"][0]["post_number"] == 7
     assert json.loads(result.content[0].text) == result.structuredContent
     assert fake_service.arguments == ("list", "abc123", 5, 2)
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "arguments"),
+    [
+        ("list-piazza-posts", {"course_id": "abc123"}),
+        (
+            "search-piazza-posts",
+            {"course_id": "abc123", "query": "project"},
+        ),
+    ],
+)
+def test_registered_piazza_summary_tools_serialize_folder_tuples(
+    monkeypatch,
+    tmp_path,
+    tool_name,
+    arguments,
+):
+    class FakePiazzaClient:
+        @staticmethod
+        async def list_posts(course_id, limit, offset):
+            return [
+                {"id": 7, "subject": "Project", "folders": ["project"]}
+            ]
+
+        @staticmethod
+        async def search_posts(course_id, query):
+            return [
+                {"id": 7, "subject": "Project", "folders": ["project"]}
+            ]
+
+    server = load_server(monkeypatch, tmp_path)
+    config = PiazzaConfig(
+        email="student@example.edu",
+        password="private-password",
+        courses=MappingProxyType({"abc123": "CMSC 430"}),
+    )
+    service = PiazzaService(config, FakePiazzaClient(), PiazzaNormalizer())
+    monkeypatch.setattr(server, "get_piazza_service", lambda: service)
+
+    result = call_registered_tool(server, tool_name, arguments)
+
+    assert result.isError is False
+    assert result.structuredContent["posts"][0]["folders"] == ["project"]
+    assert type(result.structuredContent["posts"][0]["folders"]) is list
+    assert json.loads(result.content[0].text) == result.structuredContent
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "arguments", "result_key"),
+    [
+        ("list-piazza-courses", {}, "courses"),
+        (
+            "get-piazza-post",
+            {"course_id": "abc123", "post_number": 7},
+            "thread",
+        ),
+        (
+            "search-piazza-posts",
+            {"course_id": "abc123", "query": "exam"},
+            "posts",
+        ),
+    ],
+)
+def test_other_registered_piazza_tools_validate_structured_output(
+    monkeypatch,
+    tmp_path,
+    tool_name,
+    arguments,
+    result_key,
+):
+    server = load_server(monkeypatch, tmp_path)
+    fake_service = FakePiazzaService()
+    monkeypatch.setattr(server, "get_piazza_service", lambda: fake_service)
+
+    result = call_registered_tool(server, tool_name, arguments)
+
+    assert result.isError is False
+    assert result_key in result.structuredContent
+    assert json.loads(result.content[0].text) == result.structuredContent
 
 
 @pytest.mark.parametrize(

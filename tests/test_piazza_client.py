@@ -1,4 +1,5 @@
 import asyncio
+import json
 from types import MappingProxyType
 
 from piazza_api.exceptions import NotAuthenticatedError
@@ -121,3 +122,18 @@ def test_client_rejects_malformed_feed_shape():
 
     with pytest.raises(PiazzaResponseError, match="invalid Piazza feed"):
         asyncio.run(client.list_posts("abc123", 10, 0))
+
+
+
+def test_client_discards_session_after_invalid_json():
+    class InvalidJsonPiazza:
+        def get_user_classes(self):
+            raise json.JSONDecodeError("invalid", "", 0)
+
+    client = PiazzaClient(config())
+    client._piazza = InvalidJsonPiazza()
+
+    with pytest.raises(PiazzaResponseError, match="invalid response"):
+        asyncio.run(client.list_courses())
+
+    assert client._piazza is None

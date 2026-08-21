@@ -6,7 +6,11 @@ import time
 from typing import Any
 
 from course_mcp.config import PiazzaConfig
-from course_mcp.models.piazza import PiazzaMessage, PiazzaThread
+from course_mcp.models.piazza import (
+    PiazzaMessage,
+    PiazzaPostSummary,
+    PiazzaThread,
+)
 
 from .client import PiazzaClientError, PiazzaClientProtocol
 from .normalizer import PiazzaNormalizationError, PiazzaNormalizer
@@ -178,7 +182,7 @@ class PiazzaService:
             except PiazzaNormalizationError:
                 skipped += 1
                 continue
-            posts.append(asdict(summary))
+            posts.append(self._serialize_summary(summary))
         return posts, skipped
 
     def _validate_course(self, course_id: str) -> None:
@@ -221,6 +225,22 @@ class PiazzaService:
                 cls._serialize_message(child) for child in message.children
             ],
             "truncated": message.truncated,
+        }
+
+    @staticmethod
+    def _serialize_summary(summary: PiazzaPostSummary) -> dict[str, Any]:
+        return {
+            "post_number": summary.post_number,
+            "course_id": summary.course_id,
+            "kind": summary.kind,
+            "subject": summary.subject,
+            "snippet": summary.snippet,
+            "folders": list(summary.folders),
+            "created_at": summary.created_at,
+            "updated_at": summary.updated_at,
+            "resolved": summary.resolved,
+            "source_url": summary.source_url,
+            "truncated": summary.truncated,
         }
 
     @classmethod

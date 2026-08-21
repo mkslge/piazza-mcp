@@ -32,6 +32,7 @@ class FakeClient:
                 "type": "question",
                 "subject": "Exam",
                 "content_snip": "When is it?",
+                "folders": ["exam"],
             }
         ]]
         self.thread_results = [{
@@ -41,7 +42,7 @@ class FakeClient:
             "content": "When is it?",
         }]
         self.search_results = [[
-            {"id": 1, "subject": "Exam"},
+            {"id": 1, "subject": "Exam", "folders": ["exam"]},
             {"id": 2, "subject": "Exam review"},
         ]]
 
@@ -105,7 +106,23 @@ def test_lists_summaries_without_fetching_full_posts():
 
     assert client.calls == [("posts", "abc123", 10, 0)]
     assert result["posts"][0]["subject"] == "Exam"
+    assert result["posts"][0]["folders"] == ["exam"]
+    assert type(result["posts"][0]["folders"]) is list
     assert result["returned_count"] == 1
+
+
+@pytest.mark.parametrize("folders", [[], ["project"], ["project", "exam"]])
+def test_list_posts_serializes_folders_as_json_arrays(folders):
+    client = FakeClient()
+    client.post_results = [[
+        {"id": 1, "subject": "Project", "folders": folders}
+    ]]
+    service, _ = make_service(client)
+
+    result = asyncio.run(service.list_posts("abc123"))
+
+    assert result["posts"][0]["folders"] == folders
+    assert type(result["posts"][0]["folders"]) is list
 
 
 def test_get_post_returns_normalized_thread():
@@ -127,6 +144,8 @@ def test_search_bounds_results_and_normalizes_query():
     assert result["query"] == "exam"
     assert result["returned_count"] == 1
     assert result["truncated"] is True
+    assert result["posts"][0]["folders"] == ["exam"]
+    assert type(result["posts"][0]["folders"]) is list
 
 
 @pytest.mark.parametrize(

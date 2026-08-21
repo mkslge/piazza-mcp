@@ -126,12 +126,13 @@ class PiazzaClient:
                     ) from None
             except requests.Timeout:
                 raise PiazzaTimeoutError("Piazza request timed out") from None
-            except requests.RequestException:
-                raise PiazzaClientError("Unable to reach Piazza") from None
             except (json.JSONDecodeError, TypeError, ValueError):
+                self._piazza = None
                 raise PiazzaResponseError(
                     "Piazza returned an invalid response"
                 ) from None
+            except requests.RequestException:
+                raise PiazzaClientError("Unable to reach Piazza") from None
             except PiazzaClientError:
                 raise
             except Exception:
