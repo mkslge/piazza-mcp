@@ -16,7 +16,7 @@ from course_mcp.models.calendar_item import (
 )
 
 
-FIXTURE = Path(__file__).parent / "fixtures" / "calendar.ics"
+FIXTURE = Path(__file__).parents[2] / "fixtures" / "calendar.ics"
 
 
 def test_parser_normalizes_timed_all_day_and_recurring_events():

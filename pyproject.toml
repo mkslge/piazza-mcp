@@ -1,7 +1,7 @@
 [project]
 name = "course-mcp"
 version = "0.1.0"
-description = "MCP server for referencing course files"
+description = "MCP server for course files, UMD Canvas work, and Piazza discussions"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [

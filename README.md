@@ -1,14 +1,25 @@
 # course-mcp
 
 `course-mcp` is a local Python MCP server for referencing course files,
-upcoming Canvas calendar work, and configured Piazza discussions.
+upcoming work from a UMD Canvas calendar feed, and configured Piazza
+discussions.
 
 The project combines safe local-file access with bounded, read-only course data
 from configured external sources.
 
+## Requirements
+
+- Python 3.10 through 3.14.
+- [`uv`](https://docs.astral.sh/uv/) for dependency and environment management.
+- MCP Python SDK 1.x. This release uses the v1 low-level `Server` decorator API
+  and declares `mcp>=1.28.1,<2`. MCP 2 requires an intentional server and test
+  migration; see the official
+  [v1-to-v2 migration guide](https://github.com/modelcontextprotocol/python-sdk/blob/main/docs/migration.md).
+
 ## Current Features
 
-- Loads `ROOT_DIR` from `.env` or the process environment.
+- Loads filesystem, calendar, and Piazza configuration lazily from the process
+  environment or, when running from this checkout, its root `.env` file.
 - Restricts file access to paths inside `ROOT_DIR`.
 - Provides a `FileService` for safe file reads.
 - Provides a `CourseService` for course/file listing and searching.
@@ -67,6 +78,14 @@ in `PIAZZA_COURSES`. Post text is returned as bounded plain text and identified
 as untrusted user-generated content. The tools do not post, answer, edit,
 download attachments, expose rosters, or perform instructor operations.
 
+`list-piazza-posts` accepts a `limit` from 1 through 25 (default 10) and an
+`offset` from 0 through 500 (default 0). Request additional pages sequentially
+only when the previous result has `truncated: true`. `search-piazza-posts`
+accepts a non-empty query of at most 200 characters and `max_results` from 1
+through 25 (default 10). Piazza results are cached in memory for 60 seconds;
+after a refresh failure, an existing cached response may be returned with
+`stale: true`.
+
 The Piazza integration depends on unpublished internal endpoints. It is useful
 for personal experimentation but is not an official Piazza API, may break when
 Piazza changes its website, and may be subject to Piazza or institutional usage
@@ -86,6 +105,8 @@ src/course_mcp/
   mcp_tools/             MCP tool catalog
   models/
     calendar_item.py     normalized calendar data
+    course.py            course directory data
+    file.py              course file data
     piazza.py            bounded Piazza domain models
   services/
     calendar/
@@ -107,13 +128,33 @@ src/course_mcp/
       profiler.py        aggregate-only response-shape diagnostics
       service.py         allowlisting, limits, caching, and serialization
       factory.py         lazy configured Piazza construction
-tests/                   pytest tests
+tests/
+  config/                configuration tests
+  mcp_schemas/           structured-output schema tests
+  mcp_tools/             tool-catalog tests
+  models/                model tests
+  scripts/               development-script tests
+  server/                MCP registration and dispatch tests
+  services/
+    calendar/            calendar client, parser, profiler, and service tests
+    file/                filesystem and PDF extraction tests
+    piazza/              Piazza client, normalizer, profiler, and service tests
+  fixtures/              shared synthetic test data
 skills/                  project-specific agent skills
 ```
 
 ## Configuration
 
-Create a `.env` file at the project root:
+Each integration is optional and loaded only when one of its tools is called.
+When running from this checkout, create a private `.env` from the redacted
+template:
+
+```bash
+cp .env.example .env
+chmod 600 .env
+```
+
+Configure only the integrations you want to use:
 
 ```bash
 ROOT_DIR="/Users/markseeliger/Desktop/Classes/UMD"
@@ -126,16 +167,18 @@ PIAZZA_COURSES='{"abc123":"CMSC 132","xyz789":"CMSC 216"}'
 
 `ROOT_DIR` must point to an existing directory. Each direct child directory is
 treated as a course. It is loaded only when a course-backed tool is called;
-importing the server does not require course or calendar configuration.
+importing the server does not require any source configuration.
 
-You can also pass `ROOT_DIR` directly through the environment instead of using
-`.env`.
+Process environment variables take precedence over `.env`. If you install the
+wheel outside this checkout, pass configuration through the process environment
+because the repository-root `.env` convention applies only to checkout-based
+runs.
 
-To obtain the calendar URL, sign in to ELMS-Canvas, open the global
-**Calendar**, select **Calendar Feed** in the sidebar, and copy the URL field.
-The URL is a private credential: do not commit it, paste it into tickets or
-chat, or include it in logs and screenshots. This repository ignores `.env`;
-restrict that file so only your account can read it.
+The current calendar integration is specific to UMD's ELMS-Canvas host. To
+obtain its URL, sign in to ELMS-Canvas, open the global **Calendar**, select
+**Calendar Feed** in the sidebar, and copy the URL field. The URL is a private
+credential: do not commit it, paste it into tickets or chat, or include it in
+logs and screenshots. This repository ignores `.env`.
 
 For offline use, configure a downloaded snapshot instead of the URL:
 
@@ -148,7 +191,8 @@ Configure exactly one of `CANVAS_ICAL_URL` and `CANVAS_ICAL_PATH`. Calendar
 configuration is loaded only when `get-upcoming-work` is called, so the
 existing local course tools remain available without it. Live results are
 cached in memory for five minutes; after a refresh failure, a previous result
-may be returned with `stale: true`.
+may be returned with `stale: true`. `CALENDAR_TIMEZONE` defaults to
+`America/New_York`.
 
 Piazza configuration is also lazy: the server and unrelated tools work without
 Piazza variables. `PIAZZA_COURSES` is a JSON mapping from Piazza course IDs to
@@ -167,7 +211,8 @@ email/password flow used by the unofficial package.
 From this project directory:
 
 ```bash
-uv run course-mcp
+uv sync --locked
+uv run --frozen course-mcp
 ```
 
 Because MCP servers run over stdio, they are usually launched by an MCP client
@@ -180,8 +225,13 @@ Register the server with Codex:
 ```bash
 codex mcp add course-mcp \
   --env ROOT_DIR=/Users/markseeliger/Desktop/Classes/UMD \
-  -- uv --directory /Users/markseeliger/Desktop/Coding/create-python-server/course_mcp run course-mcp
+  -- uv --directory /Users/markseeliger/Desktop/Coding/create-python-server/course_mcp run --frozen course-mcp
 ```
+
+This command passes `ROOT_DIR` explicitly. When launching from this checkout,
+configured Canvas and Piazza tools load their remaining variables from the root
+`.env`. Without those optional values, their tools report configuration errors
+while the filesystem tools continue to work.
 
 Verify the registration:
 
@@ -204,7 +254,7 @@ Inspect the configured Canvas calendar's structure without printing event
 values or the private feed URL:
 
 ```bash
-uv run python scripts/inspect_canvas_calendar.py
+uv run --frozen python scripts/inspect_canvas_calendar.py
 ```
 
 The command reports only aggregate counts for usable/skipped events, date and
@@ -217,7 +267,7 @@ sample's structure without printing course IDs, post numbers, titles, bodies,
 names, or cookies:
 
 ```bash
-uv run python scripts/inspect_piazza_shapes.py
+uv run --frozen python scripts/inspect_piazza_shapes.py
 ```
 
 The inspector loads at most five feed summaries and one full thread from the
@@ -228,14 +278,25 @@ it unless that access route is acceptable for your account.
 Run the test suite:
 
 ```bash
-uv run pytest
+uv run --frozen pytest -q
 ```
 
 Run a compile check:
 
 ```bash
-python3 -m compileall src/course_mcp tests
+uv run --frozen python -m compileall -q src/course_mcp tests scripts
 ```
+
+Verify the lockfile and package artifacts after dependency or packaging changes:
+
+```bash
+uv lock --check
+uv build
+```
+
+CI also installs the built wheel into a clean Python 3.14 environment. This is
+important because locked development tests alone do not prove that the wheel's
+declared dependency ranges resolve to compatible releases.
 
 Debug with MCP Inspector:
 

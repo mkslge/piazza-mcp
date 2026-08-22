@@ -38,7 +38,7 @@ def clear_service_config(monkeypatch):
 
 
 def test_service_packages_and_server_import_without_loading_config(tmp_path):
-    source_root = Path(__file__).resolve().parents[1] / "src"
+    source_root = Path(__file__).resolve().parents[2] / "src"
     environment = os.environ.copy()
     for name in CONFIG_ENV_VARS:
         environment.pop(name, None)

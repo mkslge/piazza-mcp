@@ -103,14 +103,18 @@ src/course_mcp/
 scripts/
 `-- inspect_piazza_shapes.py
 tests/
-|-- fixtures/
-|   `-- piazza/
-|-- test_piazza_client.py
-|-- test_piazza_config.py
-|-- test_piazza_normalizer.py
-|-- test_piazza_service.py
-|-- test_piazza_tools.py
-`-- test_server.py
+|-- config/
+|   `-- test_piazza_config.py
+|-- mcp_tools/
+|   `-- test_mcp_tools.py
+|-- server/
+|   `-- test_server.py
+`-- services/
+    `-- piazza/
+        |-- test_piazza_client.py
+        |-- test_piazza_normalizer.py
+        |-- test_piazza_profiler.py
+        `-- test_piazza_service.py
 ```
 
 `PiazzaClient` should implement a small protocol used by `PiazzaService`. Tests

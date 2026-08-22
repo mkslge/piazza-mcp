@@ -5,7 +5,7 @@ import subprocess
 import sys
 
 
-PROJECT_ROOT = Path(__file__).parents[1]
+PROJECT_ROOT = Path(__file__).parents[2]
 INSPECTOR = PROJECT_ROOT / "scripts" / "inspect_canvas_calendar.py"
 
 
