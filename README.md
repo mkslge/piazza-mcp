@@ -1,8 +1,7 @@
-# piazza-mcp
+# Piazza MCP Server
 
-`piazza-mcp` is a local, read-only MCP server for working with configured
-Piazza discussions from an MCP client. It can list courses, browse or search
-posts, retrieve complete threads, and show sanitized post revisions.
+`piazza-mcp` is an MCP server for working with configured
+Piazza discussions from an MCP client. It can list courses, browse or search posts, retrieve complete threads, and show sanitized post revisions.
 
 Access is restricted to courses you explicitly allow. The server uses the
 community-built `piazza-api` package and Piazza's unpublished internal
@@ -262,3 +261,7 @@ intend to access the configured account.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the repository layout and
 architecture notes.
+
+## License
+
+This project is available under the [MIT License](LICENSE).
