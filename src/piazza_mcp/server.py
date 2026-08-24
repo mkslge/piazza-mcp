@@ -37,6 +37,18 @@ async def handle_call_tool(
             arguments.get("offset", 0),
         )
 
+    if name == "list-piazza-filtered-posts":
+        required_arguments = ("course_id", "filters")
+        for argument in required_arguments:
+            if arguments is None or argument not in arguments:
+                raise ValueError(f"Missing required argument: {argument}")
+        return await get_piazza_service().list_filtered_posts(
+            arguments["course_id"],
+            arguments["filters"],
+            arguments.get("folder_name"),
+            arguments.get("max_results", 10),
+        )
+
     if name == "get-piazza-post":
         required_arguments = ("course_id", "post_number")
         for argument in required_arguments:

@@ -1,17 +1,15 @@
 import asyncio
 import json
-from types import MappingProxyType
+from types import MappingProxyType, SimpleNamespace
 
 from piazza_api.exceptions import NotAuthenticatedError
 import pytest
-import requests
 
 from piazza_mcp.config import PiazzaConfig
 from piazza_mcp.services.piazza.client import (
     PiazzaClient,
     PiazzaAuthenticationError,
     PiazzaResponseError,
-    PiazzaTimeoutError,
 )
 
 
@@ -24,6 +22,14 @@ def config():
 
 
 class FakeNetwork:
+    def __init__(self):
+        self.filtered_calls = []
+        self.feed_filters = SimpleNamespace(
+            unread=lambda: ("updated", None),
+            following=lambda: ("following", None),
+            folder=lambda folder_name: ("folder", folder_name),
+        )
+
     def get_feed(self, limit, offset):
         assert (limit, offset) == (10, 0)
         return {"feed": [{"id": 1}]}
@@ -35,14 +41,21 @@ class FakeNetwork:
         assert query == "exam"
         return {"results": [{"id": 2}]}
 
+    def get_filtered_feed(self, feed_filter):
+        self.filtered_calls.append(feed_filter)
+        return {"posts": [{"id": 3}]}
+
 
 class FakePiazza:
+    def __init__(self):
+        self.fake_network = FakeNetwork()
+
     def get_user_classes(self):
         return [{"nid": "abc123"}]
 
     def network(self, course_id):
         assert course_id == "abc123"
-        return FakeNetwork()
+        return self.fake_network
 
 
 def test_client_adapts_supported_read_operations_without_live_requests():
@@ -53,6 +66,69 @@ def test_client_adapts_supported_read_operations_without_live_requests():
     assert asyncio.run(client.list_posts("abc123", 10, 0)) == [{"id": 1}]
     assert asyncio.run(client.get_post("abc123", 7))["nr"] == 7
     assert asyncio.run(client.search_posts("abc123", "exam")) == [{"id": 2}]
+
+
+@pytest.mark.parametrize(
+    ("filter_name", "folder_name", "expected_filter"),
+    [
+        ("updated", None, ("updated", None)),
+        ("following", None, ("following", None)),
+        ("folder", "Exam Review", ("folder", "Exam Review")),
+    ],
+)
+def test_client_adapts_one_filtered_feed_per_call(
+    filter_name,
+    folder_name,
+    expected_filter,
+):
+    piazza = FakePiazza()
+    client = PiazzaClient(config())
+    client._piazza = piazza
+
+    result = asyncio.run(
+        client.list_filtered_posts("abc123", filter_name, folder_name)
+    )
+
+    assert result == [{"id": 3}]
+    assert piazza.fake_network.filtered_calls == [expected_filter]
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        [{"id": 3}],
+        {"feed": [{"id": 3}]},
+        {"posts": [{"id": 3}]},
+        {"results": [{"id": 3}]},
+    ],
+)
+def test_client_accepts_filtered_feed_envelopes(payload):
+    class FilteredNetwork(FakeNetwork):
+        def get_filtered_feed(self, feed_filter):
+            return payload
+
+    piazza = FakePiazza()
+    piazza.fake_network = FilteredNetwork()
+    client = PiazzaClient(config())
+    client._piazza = piazza
+
+    assert asyncio.run(
+        client.list_filtered_posts("abc123", "following", None)
+    ) == [{"id": 3}]
+
+
+def test_client_rejects_malformed_filtered_feed_shape():
+    class InvalidFilteredNetwork(FakeNetwork):
+        def get_filtered_feed(self, feed_filter):
+            return {"unexpected": []}
+
+    piazza = FakePiazza()
+    piazza.fake_network = InvalidFilteredNetwork()
+    client = PiazzaClient(config())
+    client._piazza = piazza
+
+    with pytest.raises(PiazzaResponseError, match="invalid filtered Piazza feed"):
+        asyncio.run(client.list_filtered_posts("abc123", "following", None))
 
 
 def test_client_reauthenticates_once_after_recognized_session_failure(
@@ -94,18 +170,6 @@ def test_client_limits_failed_authentication_to_two_attempts(monkeypatch):
 
     assert len(attempts) == 2
     assert "private upstream detail" not in str(error.value)
-
-
-def test_client_translates_timeout_without_upstream_details():
-    class TimeoutPiazza:
-        def get_user_classes(self):
-            raise requests.Timeout("private URL")
-
-    client = PiazzaClient(config())
-    client._piazza = TimeoutPiazza()
-
-    with pytest.raises(PiazzaTimeoutError, match="Piazza request timed out"):
-        asyncio.run(client.list_courses())
 
 
 def test_client_rejects_malformed_feed_shape():

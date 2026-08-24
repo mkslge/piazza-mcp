@@ -263,6 +263,57 @@ def _post_list_output_schema(*, include_query: bool) -> dict:
 LIST_PIAZZA_POSTS_OUTPUT_SCHEMA = _post_list_output_schema(include_query=False)
 SEARCH_PIAZZA_POSTS_OUTPUT_SCHEMA = _post_list_output_schema(include_query=True)
 
+LIST_PIAZZA_FILTERED_POSTS_OUTPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        **_metadata_properties(),
+        "course_id": {"type": "string", "minLength": 1, "maxLength": 200},
+        "filters": {
+            "type": "array",
+            "items": {
+                "type": "string",
+                "enum": ["updated", "following", "folder"],
+            },
+            "minItems": 1,
+            "maxItems": 3,
+            "uniqueItems": True,
+        },
+        "match_mode": {"type": "string", "enum": ["all"]},
+        "folder_name": {
+            "anyOf": [
+                {"type": "string", "minLength": 1, "maxLength": 100},
+                {"type": "null"},
+            ]
+        },
+        "upstream_request_count": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 3,
+        },
+        "returned_count": {"type": "integer", "minimum": 0, "maximum": 25},
+        "skipped_post_count": {"type": "integer", "minimum": 0},
+        "truncated": {"type": "boolean"},
+        "posts": {
+            "type": "array",
+            "items": _POST_SUMMARY_SCHEMA,
+            "maxItems": 25,
+        },
+    },
+    "required": [
+        *_METADATA_REQUIRED,
+        "course_id",
+        "filters",
+        "match_mode",
+        "folder_name",
+        "upstream_request_count",
+        "returned_count",
+        "skipped_post_count",
+        "truncated",
+        "posts",
+    ],
+    "additionalProperties": False,
+}
+
 GET_PIAZZA_POST_OUTPUT_SCHEMA = {
     "type": "object",
     "properties": {**_metadata_properties(), "thread": _THREAD_SCHEMA},

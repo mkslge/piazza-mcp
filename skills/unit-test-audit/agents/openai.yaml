@@ -1,0 +1,4 @@
+interface:
+  display_name: "Unit Test Audit"
+  short_description: "Find low-value and misleading unit tests"
+  default_prompt: "Use $unit-test-audit to review every unit test and list evidence-backed remove, rewrite, or consolidate candidates."

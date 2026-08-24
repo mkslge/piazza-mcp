@@ -17,6 +17,8 @@ from .normalizer import PiazzaNormalizationError, PiazzaNormalizer
 
 
 PIAZZA_CACHE_SECONDS = 60
+MAX_PIAZZA_FILTER_FEED_SCAN = 500
+PIAZZA_FILTER_ORDER = ("updated", "following", "folder")
 PIAZZA_LIMITATIONS = [
     "unofficial_internal_api",
     "write_actions_unavailable",
@@ -146,6 +148,82 @@ class PiazzaService:
             load,
         )
 
+    async def list_filtered_posts(
+        self,
+        course_id: str,
+        filters: list[str],
+        folder_name: str | None = None,
+        max_results: int = 10,
+    ) -> dict[str, Any]:
+        self._validate_course(course_id)
+        canonical_filters = self._validate_filters(filters)
+        self._validate_integer(max_results, "max_results", 1, 25)
+        normalized_folder = self._validate_filter_folder(
+            canonical_filters,
+            folder_name,
+        )
+
+        async def load() -> dict[str, Any]:
+            feed_maps: list[dict[int, PiazzaPostSummary]] = []
+            skipped = 0
+            scan_truncated = False
+
+            for filter_name in canonical_filters:
+                raw_posts = await self.client.list_filtered_posts(
+                    course_id,
+                    filter_name,
+                    normalized_folder if filter_name == "folder" else None,
+                )
+                scan_truncated = (
+                    scan_truncated
+                    or len(raw_posts) > MAX_PIAZZA_FILTER_FEED_SCAN
+                )
+                normalized_posts: dict[int, PiazzaPostSummary] = {}
+                for raw in raw_posts[:MAX_PIAZZA_FILTER_FEED_SCAN]:
+                    try:
+                        summary = self.normalizer.normalize_summary(
+                            raw,
+                            course_id,
+                        )
+                    except PiazzaNormalizationError:
+                        skipped += 1
+                        continue
+                    normalized_posts.setdefault(summary.post_number, summary)
+                feed_maps.append(normalized_posts)
+
+            matching_post_numbers = set(feed_maps[0])
+            for feed_map in feed_maps[1:]:
+                matching_post_numbers.intersection_update(feed_map)
+
+            matched_posts = [
+                self._serialize_summary(summary)
+                for post_number, summary in feed_maps[0].items()
+                if post_number in matching_post_numbers
+            ]
+            return self._response(
+                course_id=course_id,
+                filters=list(canonical_filters),
+                match_mode="all",
+                folder_name=normalized_folder,
+                upstream_request_count=len(canonical_filters),
+                returned_count=min(len(matched_posts), max_results),
+                skipped_post_count=skipped,
+                truncated=(
+                    scan_truncated or len(matched_posts) > max_results
+                ),
+                posts=matched_posts[:max_results],
+            )
+
+        cache_filters = ",".join(canonical_filters)
+        cache_folder = normalized_folder or ""
+        return await self._cached(
+            (
+                f"filtered-feed:{course_id}:{cache_filters}:"
+                f"{cache_folder}:{max_results}"
+            ),
+            load,
+        )
+
     async def _cached(
         self,
         key: str,
@@ -190,6 +268,42 @@ class PiazzaService:
             raise ValueError("course_id must be a string")
         if course_id not in self.config.courses:
             raise ValueError("course_id is not a configured Piazza course")
+
+    @staticmethod
+    def _validate_filters(filters: object) -> tuple[str, ...]:
+        valid_filters = set(PIAZZA_FILTER_ORDER)
+        if (
+            type(filters) is not list
+            or not 1 <= len(filters) <= len(PIAZZA_FILTER_ORDER)
+            or any(type(value) is not str for value in filters)
+            or any(value not in valid_filters for value in filters)
+            or len(set(filters)) != len(filters)
+        ):
+            raise ValueError(
+                "filters must contain 1 to 3 unique values from updated, "
+                "following, or folder"
+            )
+        return tuple(value for value in PIAZZA_FILTER_ORDER if value in filters)
+
+    @staticmethod
+    def _validate_filter_folder(
+        filters: tuple[str, ...],
+        folder_name: object,
+    ) -> str | None:
+        if "folder" not in filters:
+            if folder_name is not None:
+                raise ValueError(
+                    "folder_name is only valid for the folder filter"
+                )
+            return None
+        if type(folder_name) is not str or not folder_name.strip():
+            raise ValueError(
+                "folder_name is required for the folder filter"
+            )
+        normalized_folder = folder_name.strip()
+        if len(normalized_folder) > 100:
+            raise ValueError("folder_name cannot exceed 100 characters")
+        return normalized_folder
 
     @staticmethod
     def _validate_integer(

@@ -3,6 +3,7 @@ import mcp.types as types
 from piazza_mcp.mcp_schemas import (
     GET_PIAZZA_POST_OUTPUT_SCHEMA,
     LIST_PIAZZA_COURSES_OUTPUT_SCHEMA,
+    LIST_PIAZZA_FILTERED_POSTS_OUTPUT_SCHEMA,
     LIST_PIAZZA_POSTS_OUTPUT_SCHEMA,
     SEARCH_PIAZZA_POSTS_OUTPUT_SCHEMA,
 )
@@ -84,6 +85,74 @@ def build_piazza_tools() -> list[types.Tool]:
                 "additionalProperties": False,
             },
             outputSchema=LIST_PIAZZA_POSTS_OUTPUT_SCHEMA,
+            annotations=_READ_ONLY_ANNOTATIONS,
+        ),
+        types.Tool(
+            name="list-piazza-filtered-posts",
+            description=(
+                "List bounded post summaries from one configured Piazza "
+                "course that match every selected filter (AND, not OR). "
+                "Choose one to three unique filters from updated, following, "
+                "and folder. Supply folder_name exactly when folder is "
+                "selected. The maximum result count is 25. Piazza accepts "
+                "only one filter per upstream request, so combinations use "
+                "up to three sequential requests and a local post-number "
+                "intersection. Filtered feeds have no pagination, and a "
+                "combined response is not an atomic snapshot. "
+                "truncated=true means a known local scan or result bound "
+                "omitted potential or confirmed matches; there is no offset "
+                "to request them. "
+                f"{_UNTRUSTED_CONTENT_WARNING}"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "course_id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": (
+                            "A course ID returned by list-piazza-courses."
+                        ),
+                    },
+                    "filters": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "enum": ["updated", "following", "folder"],
+                        },
+                        "minItems": 1,
+                        "maxItems": 3,
+                        "uniqueItems": True,
+                        "description": (
+                            "Every selected filter must match. Array order "
+                            "does not affect results."
+                        ),
+                    },
+                    "folder_name": {
+                        "anyOf": [
+                            {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 100,
+                            },
+                            {"type": "null"},
+                        ],
+                        "default": None,
+                        "description": (
+                            "Required exactly when filters includes folder."
+                        ),
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 25,
+                        "default": 10,
+                    },
+                },
+                "required": ["course_id", "filters"],
+                "additionalProperties": False,
+            },
+            outputSchema=LIST_PIAZZA_FILTERED_POSTS_OUTPUT_SCHEMA,
             annotations=_READ_ONLY_ANNOTATIONS,
         ),
         types.Tool(

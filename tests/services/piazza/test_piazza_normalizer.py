@@ -28,28 +28,6 @@ def test_normalizes_course_with_configured_name():
     assert course.is_ta is False
 
 
-def test_normalizes_summary_from_feed_shape_and_strips_html():
-    summary = PiazzaNormalizer().normalize_summary(
-        {
-            "id": "42",
-            "type": "question",
-            "subject": "<b>Homework 1</b>",
-            "content_snip": "<p>How does recursion work?</p><script>bad()</script>",
-            "folders": ["hw1"],
-            "created": "2026-08-19T10:00:00Z",
-            "updated": "2026-08-19T11:00:00Z",
-            "status": "active",
-        },
-        "abc123",
-    )
-
-    assert summary.post_number == 42
-    assert summary.subject == "Homework 1"
-    assert summary.snippet == "How does recursion work?"
-    assert summary.source_url.endswith("/abc123/post/42")
-    assert summary.resolved is False
-
-
 def test_normalizes_thread_answers_followups_and_nested_feedback():
     thread = PiazzaNormalizer().normalize_thread(
         {

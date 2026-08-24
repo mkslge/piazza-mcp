@@ -5,7 +5,10 @@ import pytest
 
 from piazza_mcp.config import PiazzaConfig
 from piazza_mcp.services.piazza import PiazzaClientError, PiazzaNormalizer
-from piazza_mcp.services.piazza.service import PiazzaService
+from piazza_mcp.services.piazza.service import (
+    MAX_PIAZZA_FILTER_FEED_SCAN,
+    PiazzaService,
+)
 
 
 class FakeClock:
@@ -45,6 +48,11 @@ class FakeClient:
             {"id": 1, "subject": "Exam", "folders": ["exam"]},
             {"id": 2, "subject": "Exam review"},
         ]]
+        self.filtered_results = {
+            "updated": [[{"id": 1, "subject": "Updated exam post"}]],
+            "following": [[{"id": 1, "subject": "Followed exam post"}]],
+            "folder": [[{"id": 1, "subject": "Folder exam post"}]],
+        }
 
     @staticmethod
     def _next(results):
@@ -68,6 +76,10 @@ class FakeClient:
     async def search_posts(self, course_id, query):
         self.calls.append(("search", course_id, query))
         return self._next(self.search_results)
+
+    async def list_filtered_posts(self, course_id, filter_name, folder_name):
+        self.calls.append(("filtered", course_id, filter_name, folder_name))
+        return self._next(self.filtered_results[filter_name])
 
 
 def make_service(client=None, clock=None):
@@ -148,6 +160,159 @@ def test_search_bounds_results_and_normalizes_query():
     assert type(result["posts"][0]["folders"]) is list
 
 
+def test_filtered_posts_intersects_feeds_in_canonical_order_and_caches():
+    client = FakeClient()
+    client.filtered_results["following"] = [[
+        {"id": 3, "subject": "Third"},
+        {"id": 2, "subject": "Second"},
+        {"id": 1, "subject": "First"},
+    ]]
+    client.filtered_results["folder"] = [[
+        {"id": 2, "subject": "Folder second"},
+        {"id": 3, "subject": "Folder third"},
+    ]]
+    service, _ = make_service(client)
+
+    first = asyncio.run(
+        service.list_filtered_posts(
+            "abc123",
+            ["folder", "following"],
+            "  Exam Review  ",
+        )
+    )
+    second = asyncio.run(
+        service.list_filtered_posts(
+            "abc123",
+            ["following", "folder"],
+            "Exam Review",
+        )
+    )
+
+    assert client.calls == [
+        ("filtered", "abc123", "following", None),
+        ("filtered", "abc123", "folder", "Exam Review"),
+    ]
+    assert first == second
+    assert first["filters"] == ["following", "folder"]
+    assert first["match_mode"] == "all"
+    assert first["folder_name"] == "Exam Review"
+    assert first["upstream_request_count"] == 2
+    assert [post["post_number"] for post in first["posts"]] == [3, 2]
+    assert first["posts"][0]["subject"] == "Third"
+
+
+def test_filtered_posts_computes_three_way_intersection():
+    client = FakeClient()
+    client.filtered_results = {
+        "updated": [[
+            {"id": 4, "subject": "Fourth"},
+            {"id": 3, "subject": "Third"},
+            {"id": 2, "subject": "Second"},
+        ]],
+        "following": [[
+            {"id": 3, "subject": "Third"},
+            {"id": 2, "subject": "Second"},
+        ]],
+        "folder": [[
+            {"id": 2, "subject": "Second"},
+            {"id": 3, "subject": "Third"},
+            {"id": 1, "subject": "First"},
+        ]],
+    }
+    service, _ = make_service(client)
+
+    result = asyncio.run(
+        service.list_filtered_posts(
+            "abc123",
+            ["folder", "updated", "following"],
+            "exam",
+        )
+    )
+
+    assert [call[2] for call in client.calls] == [
+        "updated",
+        "following",
+        "folder",
+    ]
+    assert [post["post_number"] for post in result["posts"]] == [3, 2]
+    assert result["upstream_request_count"] == 3
+
+
+def test_filtered_posts_caps_results_and_keeps_first_duplicate():
+    client = FakeClient()
+    client.filtered_results["following"] = [[
+        {"id": 1, "subject": "First copy"},
+        {"id": 1, "subject": "Second copy"},
+        {"id": 2, "subject": "Second"},
+        {"id": 3, "subject": "Third"},
+    ]]
+    service, _ = make_service(client)
+
+    result = asyncio.run(
+        service.list_filtered_posts("abc123", ["following"], max_results=2)
+    )
+
+    assert result["returned_count"] == 2
+    assert result["truncated"] is True
+    assert [post["post_number"] for post in result["posts"]] == [1, 2]
+    assert result["posts"][0]["subject"] == "First copy"
+
+
+def test_filtered_posts_reports_scan_bound_and_malformed_entries():
+    client = FakeClient()
+    client.filtered_results["following"] = [[
+        *(
+            {"id": number, "subject": f"Post {number}"}
+            for number in range(1, MAX_PIAZZA_FILTER_FEED_SCAN + 2)
+        ),
+        {},
+    ]]
+    client.filtered_results["folder"] = [[
+        {"id": MAX_PIAZZA_FILTER_FEED_SCAN, "subject": "Last scanned"},
+        {"id": 0, "subject": "Invalid"},
+    ]]
+    service, _ = make_service(client)
+
+    result = asyncio.run(
+        service.list_filtered_posts(
+            "abc123",
+            ["following", "folder"],
+            "exam",
+        )
+    )
+
+    assert result["truncated"] is True
+    assert result["skipped_post_count"] == 1
+    assert [post["post_number"] for post in result["posts"]] == [
+        MAX_PIAZZA_FILTER_FEED_SCAN
+    ]
+
+
+def test_filtered_posts_counts_malformed_entries_across_feeds():
+    client = FakeClient()
+    client.filtered_results["following"] = [[
+        {},
+        {"id": 1, "subject": "Valid"},
+    ]]
+    client.filtered_results["folder"] = [[
+        {"id": 0, "subject": "Invalid"},
+        {"id": 1, "subject": "Valid"},
+    ]]
+    service, _ = make_service(client)
+
+    result = asyncio.run(
+        service.list_filtered_posts(
+            "abc123",
+            ["following", "folder"],
+            "exam",
+        )
+    )
+
+    assert result["skipped_post_count"] == 2
+    assert result["returned_count"] == 1
+    assert result["truncated"] is False
+
+
 @pytest.mark.parametrize(
     ("operation", "message"),
     [
@@ -159,6 +324,57 @@ def test_search_bounds_results_and_normalizes_query():
         (lambda service: service.search_posts("abc123", "  "), "query"),
         (lambda service: service.search_posts("abc123", "x" * 201), "query"),
         (lambda service: service.search_posts("abc123", "x", 26), "max_results"),
+        (lambda service: service.list_filtered_posts("abc123", []), "filters"),
+        (
+            lambda service: service.list_filtered_posts(
+                "abc123", "following"
+            ),
+            "filters",
+        ),
+        (
+            lambda service: service.list_filtered_posts(
+                "abc123",
+                ["updated", "following", "folder", "updated"],
+                "exam",
+            ),
+            "filters",
+        ),
+        (
+            lambda service: service.list_filtered_posts(
+                "abc123", ["following", "following"]
+            ),
+            "filters",
+        ),
+        (
+            lambda service: service.list_filtered_posts("abc123", ["other"]),
+            "filters",
+        ),
+        (
+            lambda service: service.list_filtered_posts("abc123", [True]),
+            "filters",
+        ),
+        (
+            lambda service: service.list_filtered_posts("abc123", ["folder"]),
+            "folder_name",
+        ),
+        (
+            lambda service: service.list_filtered_posts(
+                "abc123", ["folder"], "x" * 101
+            ),
+            "folder_name",
+        ),
+        (
+            lambda service: service.list_filtered_posts(
+                "abc123", ["following"], "exam"
+            ),
+            "folder_name",
+        ),
+        (
+            lambda service: service.list_filtered_posts(
+                "abc123", ["following"], max_results=True
+            ),
+            "max_results",
+        ),
     ],
 )
 def test_invalid_inputs_fail_before_network_call(operation, message):
@@ -193,3 +409,50 @@ def test_initial_client_failure_is_not_hidden():
 
     with pytest.raises(PiazzaClientError, match="Unable to reach Piazza"):
         asyncio.run(service.list_posts("abc123"))
+
+
+def test_filtered_posts_returns_only_a_cached_complete_intersection_as_stale():
+    clock = FakeClock()
+    client = FakeClient()
+    client.filtered_results["following"] = [
+        [{"id": 1, "subject": "Followed"}],
+        [{"id": 1, "subject": "Followed refresh"}],
+    ]
+    client.filtered_results["folder"] = [
+        [{"id": 1, "subject": "Folder"}],
+        PiazzaClientError("safe component failure"),
+    ]
+    service, _ = make_service(client, clock)
+
+    first = asyncio.run(
+        service.list_filtered_posts(
+            "abc123", ["following", "folder"], "exam"
+        )
+    )
+    clock.advance(61)
+    stale = asyncio.run(
+        service.list_filtered_posts(
+            "abc123", ["folder", "following"], "exam"
+        )
+    )
+
+    assert first["stale"] is False
+    assert stale["stale"] is True
+    assert stale["posts"] == first["posts"]
+    assert len(client.calls) == 4
+
+
+def test_filtered_posts_does_not_return_partial_initial_intersection():
+    client = FakeClient()
+    client.filtered_results["following"] = [[{"id": 1, "subject": "Post"}]]
+    client.filtered_results["folder"] = [
+        PiazzaClientError("safe component failure")
+    ]
+    service, _ = make_service(client)
+
+    with pytest.raises(PiazzaClientError, match="safe component failure"):
+        asyncio.run(
+            service.list_filtered_posts(
+                "abc123", ["following", "folder"], "exam"
+            )
+        )

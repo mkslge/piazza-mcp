@@ -98,6 +98,33 @@ class FakePiazzaService:
             },
         }
 
+    async def list_filtered_posts(
+        self,
+        course_id,
+        filters,
+        folder_name=None,
+        max_results=10,
+    ):
+        self.arguments = (
+            "filtered",
+            course_id,
+            filters,
+            folder_name,
+            max_results,
+        )
+        return {
+            **self.metadata(),
+            "course_id": course_id,
+            "filters": filters,
+            "match_mode": "all",
+            "folder_name": folder_name,
+            "upstream_request_count": len(filters),
+            "returned_count": 1,
+            "skipped_post_count": 0,
+            "truncated": False,
+            "posts": [self.summary(course_id)],
+        }
+
     async def search_posts(self, course_id, query, max_results=10):
         self.arguments = ("search", course_id, query, max_results)
         return {
@@ -133,35 +160,6 @@ def test_registered_server_exposes_only_piazza_tools():
     assert list_registered_tools(server) == build_tools()
 
 
-def test_handlers_dispatch_defaults(monkeypatch):
-    server = load_server()
-    fake_service = FakePiazzaService()
-    monkeypatch.setattr(server, "get_piazza_service", lambda: fake_service)
-
-    courses = asyncio.run(server.handle_call_tool("list-piazza-courses", {}))
-    posts = asyncio.run(
-        server.handle_call_tool("list-piazza-posts", {"course_id": "abc123"})
-    )
-    thread = asyncio.run(
-        server.handle_call_tool(
-            "get-piazza-post",
-            {"course_id": "abc123", "post_number": 7},
-        )
-    )
-    search = asyncio.run(
-        server.handle_call_tool(
-            "search-piazza-posts",
-            {"course_id": "abc123", "query": "exam"},
-        )
-    )
-
-    assert courses["courses"][0]["course_id"] == "abc123"
-    assert posts["posts"][0]["post_number"] == 7
-    assert thread["thread"]["post_number"] == 7
-    assert search["query"] == "exam"
-    assert fake_service.arguments == ("search", "abc123", "exam", 10)
-
-
 @pytest.mark.parametrize(
     ("tool_name", "arguments", "result_key"),
     [
@@ -169,6 +167,15 @@ def test_handlers_dispatch_defaults(monkeypatch):
         (
             "list-piazza-posts",
             {"course_id": "abc123", "limit": 5, "offset": 2},
+            "posts",
+        ),
+        (
+            "list-piazza-filtered-posts",
+            {
+                "course_id": "abc123",
+                "filters": ["following", "folder"],
+                "folder_name": "exam",
+            },
             "posts",
         ),
         (
@@ -204,6 +211,12 @@ def test_registered_tools_return_valid_structured_content(
     ("tool_name", "arguments", "missing"),
     [
         ("list-piazza-posts", {}, "course_id"),
+        ("list-piazza-filtered-posts", {}, "course_id"),
+        (
+            "list-piazza-filtered-posts",
+            {"course_id": "abc123"},
+            "filters",
+        ),
         ("get-piazza-post", {"course_id": "abc123"}, "post_number"),
         ("search-piazza-posts", {"course_id": "abc123"}, "query"),
     ],

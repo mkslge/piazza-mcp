@@ -1,0 +1,4 @@
+interface:
+  display_name: "Comment Skill"
+  short_description: "Add concise documentation comments to code"
+  default_prompt: "Use $comment-skill to document functions and clarify non-obvious code."

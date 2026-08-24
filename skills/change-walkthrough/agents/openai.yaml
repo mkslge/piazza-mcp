@@ -1,0 +1,4 @@
+interface:
+  display_name: "Change Walkthrough"
+  short_description: "Explain code changes with diagrams and review order"
+  default_prompt: "Use $change-walkthrough to explain these changes with Mermaid diagrams and an ordered code-review tour."

@@ -49,6 +49,13 @@ class PiazzaClientProtocol(Protocol):
         query: str,
     ) -> list[dict[str, Any]]: ...
 
+    async def list_filtered_posts(
+        self,
+        course_id: str,
+        filter_name: str,
+        folder_name: str | None,
+    ) -> list[dict[str, Any]]: ...
+
 
 class _TimeoutSession(requests.Session):
     def __init__(self, timeout_seconds: float):
@@ -107,6 +114,27 @@ class PiazzaClient:
             lambda piazza: piazza.network(course_id).search_feed(query)
         )
         return self._extract_posts(result, "Piazza search")
+
+    async def list_filtered_posts(
+        self,
+        course_id: str,
+        filter_name: str,
+        folder_name: str | None,
+    ) -> list[dict[str, Any]]:
+        def load(piazza: Piazza) -> Any:
+            network = piazza.network(course_id)
+            if filter_name == "updated":
+                feed_filter = network.feed_filters.unread()
+            elif filter_name == "following":
+                feed_filter = network.feed_filters.following()
+            elif filter_name == "folder":
+                feed_filter = network.feed_filters.folder(folder_name)
+            else:
+                raise PiazzaClientError("Unsupported Piazza feed filter")
+            return network.get_filtered_feed(feed_filter)
+
+        result = await self._run(load)
+        return self._extract_posts(result, "filtered Piazza feed")
 
     async def _run(self, operation: Callable[[Piazza], T]) -> T:
         async with self._lock:

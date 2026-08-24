@@ -1,0 +1,4 @@
+interface:
+  display_name: "Code Critique"
+  short_description: "Challenge plans and changes with concrete tradeoffs"
+  default_prompt: "Use $code-critique as an independent reviewer of this plan or implementation; do not edit it, and return prioritized, evidence-backed improvements with tradeoffs."
