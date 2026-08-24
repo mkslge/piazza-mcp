@@ -2,6 +2,9 @@ from piazza_mcp.models.piazza import (
     MAX_PIAZZA_BODY_LENGTH,
     MAX_PIAZZA_FOLLOWUPS,
     MAX_PIAZZA_MESSAGE_LENGTH,
+    MAX_PIAZZA_HISTORY_SCAN,
+    MAX_PIAZZA_REVISION_BODY_LENGTH,
+    MAX_PIAZZA_REVISIONS,
     MAX_PIAZZA_SNIPPET_LENGTH,
     MAX_PIAZZA_SUBJECT_LENGTH,
 )
@@ -211,6 +214,61 @@ _THREAD_SCHEMA = {
     "additionalProperties": False,
 }
 
+_REVISION_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "sequence": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": MAX_PIAZZA_REVISIONS,
+        },
+        "subject": {
+            "anyOf": [
+                {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": MAX_PIAZZA_SUBJECT_LENGTH,
+                },
+                {"type": "null"},
+            ]
+        },
+        "body": {
+            "anyOf": [
+                {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": MAX_PIAZZA_REVISION_BODY_LENGTH,
+                },
+                {"type": "null"},
+            ]
+        },
+        "created_at": _NULLABLE_TIMESTAMP,
+        "truncated": {"type": "boolean"},
+    },
+    "required": [
+        "sequence",
+        "subject",
+        "body",
+        "created_at",
+        "truncated",
+    ],
+    "additionalProperties": False,
+    "anyOf": [
+        {
+            "properties": {
+                "subject": {"type": "string", "minLength": 1}
+            },
+            "required": ["subject"],
+        },
+        {
+            "properties": {
+                "body": {"type": "string", "minLength": 1}
+            },
+            "required": ["body"],
+        },
+    ],
+}
+
 
 LIST_PIAZZA_COURSES_OUTPUT_SCHEMA = {
     "type": "object",
@@ -319,4 +377,76 @@ GET_PIAZZA_POST_OUTPUT_SCHEMA = {
     "properties": {**_metadata_properties(), "thread": _THREAD_SCHEMA},
     "required": [*_METADATA_REQUIRED, "thread"],
     "additionalProperties": False,
+}
+
+GET_PIAZZA_POST_HISTORY_OUTPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        **_metadata_properties(),
+        "course_id": {"type": "string", "minLength": 1, "maxLength": 200},
+        "post_number": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1_000_000_000,
+        },
+        "history_available": {"type": "boolean"},
+        "ordering": {
+            "type": "string",
+            "enum": ["chronological", "piazza", "unavailable"],
+        },
+        "returned_count": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": MAX_PIAZZA_REVISIONS,
+        },
+        "skipped_revision_count": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": MAX_PIAZZA_HISTORY_SCAN,
+        },
+        "truncated": {"type": "boolean"},
+        "revisions": {
+            "type": "array",
+            "items": _REVISION_SCHEMA,
+            "maxItems": MAX_PIAZZA_REVISIONS,
+        },
+    },
+    "required": [
+        *_METADATA_REQUIRED,
+        "course_id",
+        "post_number",
+        "history_available",
+        "ordering",
+        "returned_count",
+        "skipped_revision_count",
+        "truncated",
+        "revisions",
+    ],
+    "additionalProperties": False,
+    "allOf": [
+        {
+            "if": {
+                "properties": {"history_available": {"const": False}},
+                "required": ["history_available"],
+            },
+            "then": {
+                "properties": {
+                    "ordering": {"const": "unavailable"},
+                    "returned_count": {"const": 0},
+                    "revisions": {"maxItems": 0},
+                }
+            },
+        },
+        {
+            "if": {
+                "properties": {"history_available": {"const": True}},
+                "required": ["history_available"],
+            },
+            "then": {
+                "properties": {
+                    "ordering": {"enum": ["chronological", "piazza"]}
+                }
+            },
+        },
+    ],
 }

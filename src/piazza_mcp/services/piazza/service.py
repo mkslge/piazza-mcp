@@ -7,8 +7,11 @@ from typing import Any
 
 from piazza_mcp.config import PiazzaConfig
 from piazza_mcp.models.piazza import (
+    MAX_PIAZZA_REVISIONS,
     PiazzaMessage,
+    PiazzaPostHistory,
     PiazzaPostSummary,
+    PiazzaRevision,
     PiazzaThread,
 )
 
@@ -105,10 +108,45 @@ class PiazzaService:
             try:
                 thread = self.normalizer.normalize_thread(raw_post, course_id)
             except PiazzaNormalizationError:
-                raise PiazzaClientError("Piazza returned an unusable post") from None
+                raise PiazzaClientError(
+                    "Piazza returned an unusable post"
+                ) from None
             return self._response(thread=self._serialize_thread(thread))
 
         return await self._cached(f"post:{course_id}:{post_number}", load)
+
+    async def get_post_history(
+        self,
+        course_id: str,
+        post_number: int,
+        max_revisions: int = 10,
+    ) -> dict[str, Any]:
+        self._validate_course(course_id)
+        self._validate_integer(post_number, "post_number", 1, 1_000_000_000)
+        self._validate_integer(
+            max_revisions,
+            "max_revisions",
+            1,
+            MAX_PIAZZA_REVISIONS,
+        )
+
+        async def load() -> dict[str, Any]:
+            raw_post = await self.client.get_post(course_id, post_number)
+            try:
+                history = self.normalizer.normalize_history(
+                    raw_post,
+                    course_id,
+                    post_number,
+                    max_revisions,
+                )
+            except PiazzaNormalizationError:
+                raise PiazzaClientError("Piazza returned an unusable post") from None
+            return self._response(**self._serialize_post_history(history))
+
+        return await self._cached(
+            f"history:{course_id}:{post_number}:{max_revisions}",
+            load,
+        )
 
     async def search_posts(
         self,
@@ -355,6 +393,35 @@ class PiazzaService:
             "resolved": summary.resolved,
             "source_url": summary.source_url,
             "truncated": summary.truncated,
+        }
+
+    @staticmethod
+    def _serialize_revision(revision: PiazzaRevision) -> dict[str, Any]:
+        return {
+            "sequence": revision.sequence,
+            "subject": revision.subject,
+            "body": revision.body,
+            "created_at": revision.created_at,
+            "truncated": revision.truncated,
+        }
+
+    @classmethod
+    def _serialize_post_history(
+        cls,
+        history: PiazzaPostHistory,
+    ) -> dict[str, Any]:
+        return {
+            "course_id": history.course_id,
+            "post_number": history.post_number,
+            "history_available": history.history_available,
+            "ordering": history.ordering,
+            "returned_count": len(history.revisions),
+            "skipped_revision_count": history.skipped_revision_count,
+            "truncated": history.truncated,
+            "revisions": [
+                cls._serialize_revision(revision)
+                for revision in history.revisions
+            ],
         }
 
     @classmethod

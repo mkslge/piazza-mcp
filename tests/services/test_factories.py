@@ -1,12 +1,8 @@
-import os
-from pathlib import Path
-import subprocess
-import sys
-
 import pytest
 
 import piazza_mcp.config.piazza as piazza_config_module
 from piazza_mcp.services.piazza import factory as piazza_factory
+from tests.support import run_python_in_clean_process
 
 
 PIAZZA_ENV_VARS = ("PIAZZA_EMAIL", "PIAZZA_PASSWORD", "PIAZZA_COURSES")
@@ -19,13 +15,6 @@ def clear_piazza_config(monkeypatch):
 
 
 def test_package_and_server_import_without_loading_config(tmp_path):
-    source_root = Path(__file__).resolve().parents[2] / "src"
-    environment = os.environ.copy()
-    for name in PIAZZA_ENV_VARS:
-        environment.pop(name, None)
-    environment["PYTHONDONTWRITEBYTECODE"] = "1"
-    environment["PYTHONPATH"] = str(source_root)
-
     code = """
 import piazza_mcp.config.env as config_env
 
@@ -38,13 +27,9 @@ config_env.PROJECT_ENV_PATH = ForbiddenEnvPath()
 import piazza_mcp.services.piazza
 import piazza_mcp.server
 """
-    result = subprocess.run(
-        [sys.executable, "-c", code],
+    result = run_python_in_clean_process(
+        code,
         cwd=tmp_path,
-        env=environment,
-        capture_output=True,
-        text=True,
-        check=False,
     )
 
     assert result.returncode == 0, result.stderr

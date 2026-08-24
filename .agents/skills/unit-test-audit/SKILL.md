@@ -1,6 +1,6 @@
 ---
 name: unit-test-audit
-description: Audit an existing unit-test suite for useless, redundant, misleading, brittle, or weak tests and produce an evidence-backed list of tests to remove, rewrite, or consolidate. Use when the user asks whether tests are valuable or requests a test-quality audit. Do not use for ordinary test-failure debugging or when the primary request is to add test coverage.
+description: Audit an existing unit-test suite for useless, redundant, misleading, brittle, or weak tests and produce an evidence-backed list of tests to remove, rewrite, or consolidate. Use when the user asks whether tests are valuable, requests a test-quality audit, or asks for an independent review of newly written tests. Do not use for ordinary test-failure debugging or when the primary request is to add coverage.
 ---
 
 # Unit Test Audit
@@ -41,6 +41,10 @@ Do not install new analysis or mutation-testing dependencies merely for the
 audit. If existing coverage data or tooling is available, use it only to help
 trace execution.
 
+When this repository provides `scripts/check_test_quality.py`, run it as an
+initial mechanical screen. Treat a clean result as evidence only that the
+listed static anti-patterns are absent, not that the tests are valuable.
+
 For every test definition, determine:
 
 1. The contract, invariant, branch, regression, or failure mode it intends to
@@ -52,6 +56,24 @@ For every test definition, determine:
    stronger failure sensitivity.
 5. Whether the test is deterministic and coupled only to details that matter
    to the contract.
+
+Give extra scrutiny to these failure-prone patterns:
+
+- An expected value copied from current implementation behavior without being
+  reconciled with the domain contract.
+- An import-isolation test that runs in the already-imported interpreter.
+- A fake that retains only its most recent call when several calls matter.
+- A privacy test that checks a generic substring instead of a unique sentinel
+  across the entire outward representation.
+- A catalog test that selects an entry by numeric position when order is not
+  the contract.
+
+For an important new or rewritten test, use
+`scripts/run_test_challenge.py` when available to test one plausible mutation
+in an isolated repository copy. Choose a syntactically valid behavior change,
+run only the relevant test node IDs, and confirm the unmodified baseline passes
+before accepting a mutation-caused failure. A killed mutation supports failure
+sensitivity; it does not prove that the test's expected value is correct.
 
 ## Classification Rubric
 
@@ -134,4 +156,3 @@ Before returning the audit, confirm that:
   and compatibility coverage.
 - Commands and results are reported accurately, and no live external call was
   made without authorization.
-

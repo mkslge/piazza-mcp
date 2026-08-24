@@ -11,6 +11,7 @@ from piazza_mcp.services.piazza.client import (
     PiazzaAuthenticationError,
     PiazzaResponseError,
 )
+from tests.support import assert_sensitive_value_absent
 
 
 def config():
@@ -169,7 +170,7 @@ def test_client_limits_failed_authentication_to_two_attempts(monkeypatch):
         asyncio.run(client.list_courses())
 
     assert len(attempts) == 2
-    assert "private upstream detail" not in str(error.value)
+    assert_sensitive_value_absent(error.value, "private upstream detail")
 
 
 def test_client_rejects_malformed_feed_shape():

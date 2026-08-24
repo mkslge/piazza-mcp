@@ -9,6 +9,7 @@ from piazza_mcp.services.piazza.service import (
     MAX_PIAZZA_FILTER_FEED_SCAN,
     PiazzaService,
 )
+from tests.support import assert_sensitive_value_absent
 
 
 class FakeClock:
@@ -145,6 +146,102 @@ def test_get_post_returns_normalized_thread():
     assert client.calls == [("post", "abc123", 1)]
     assert result["thread"]["body"] == "When is it?"
     assert result["thread"]["source_url"].endswith("/abc123/post/1")
+
+
+def test_get_post_history_returns_normalized_history_and_uses_exact_cache_key():
+    client = FakeClient()
+    client.thread_results = [
+        {
+            "history": [
+                {
+                    "subject": "<b>Original</b>",
+                    "content": "First body",
+                    "created": "2026-08-20T14:00:00Z",
+                },
+                {
+                    "subject": "Revised",
+                    "content": "Second body",
+                    "created": "2026-08-20T15:00:00Z",
+                },
+            ]
+        }
+    ]
+    service, _ = make_service(client)
+
+    first = asyncio.run(service.get_post_history("abc123", 1, 2))
+    second = asyncio.run(service.get_post_history("abc123", 1, 2))
+
+    assert first == second
+    assert client.calls == [("post", "abc123", 1)]
+    assert list(service._cache) == ["history:abc123:1:2"]
+    assert first["course_id"] == "abc123"
+    assert first["post_number"] == 1
+    assert first["history_available"] is True
+    assert first["ordering"] == "chronological"
+    assert first["returned_count"] == 2
+    assert first["returned_count"] == len(first["revisions"])
+    assert first["revisions"][0]["subject"] == "Original"
+
+
+def test_post_history_cache_does_not_leak_raw_identity_fields():
+    sentinel = "SENSITIVE_CACHED_HISTORY_SENTINEL_91BC"
+    client = FakeClient()
+    client.thread_results = [
+        {
+            "history": [
+                {
+                    "subject": "Visible subject",
+                    "content": "Visible body",
+                    "uid": sentinel,
+                    "name": sentinel,
+                    "anon": sentinel,
+                    "change_log": {"private": sentinel},
+                }
+            ]
+        }
+    ]
+    service, _ = make_service(client)
+
+    result = asyncio.run(service.get_post_history("abc123", 1))
+
+    assert client.calls == [("post", "abc123", 1)]
+    assert result["revisions"][0]["subject"] == "Visible subject"
+    assert_sensitive_value_absent(result, sentinel)
+    assert_sensitive_value_absent(service._cache, sentinel)
+
+
+def test_get_post_history_returns_unavailable_when_piazza_omits_history():
+    service, client = make_service()
+
+    result = asyncio.run(service.get_post_history("abc123", 1))
+
+    assert client.calls == [("post", "abc123", 1)]
+    assert result["history_available"] is False
+    assert result["ordering"] == "unavailable"
+    assert result["returned_count"] == 0
+    assert result["revisions"] == []
+
+
+def test_get_post_history_returns_stale_normalized_cache_after_failure():
+    clock = FakeClock()
+    client = FakeClient()
+    client.thread_results = [
+        {"history": [{"subject": "Original"}]},
+        PiazzaClientError("safe upstream failure"),
+    ]
+    service, _ = make_service(client, clock)
+
+    fresh = asyncio.run(service.get_post_history("abc123", 1))
+    clock.advance(61)
+    stale = asyncio.run(service.get_post_history("abc123", 1))
+
+    assert fresh["stale"] is False
+    assert stale["stale"] is True
+    assert stale["revisions"] == fresh["revisions"]
+    assert client.calls == [
+        ("post", "abc123", 1),
+        ("post", "abc123", 1),
+    ]
 
 
 def test_search_bounds_results_and_normalizes_query():
@@ -321,6 +418,32 @@ def test_filtered_posts_counts_malformed_entries_across_feeds():
         (lambda service: service.list_posts("abc123", True), "limit"),
         (lambda service: service.list_posts("abc123", offset=501), "offset"),
         (lambda service: service.get_post("abc123", 0), "post_number"),
+        (
+            lambda service: service.get_post_history("unknown", 1),
+            "not a configured",
+        ),
+        (
+            lambda service: service.get_post_history("abc123", 0),
+            "post_number",
+        ),
+        (
+            lambda service: service.get_post_history(
+                "abc123", 1, max_revisions=0
+            ),
+            "max_revisions",
+        ),
+        (
+            lambda service: service.get_post_history(
+                "abc123", 1, max_revisions=21
+            ),
+            "max_revisions",
+        ),
+        (
+            lambda service: service.get_post_history(
+                "abc123", 1, max_revisions=True
+            ),
+            "max_revisions",
+        ),
         (lambda service: service.search_posts("abc123", "  "), "query"),
         (lambda service: service.search_posts("abc123", "x" * 201), "query"),
         (lambda service: service.search_posts("abc123", "x", 26), "max_results"),

@@ -1,6 +1,5 @@
-import json
-
 from piazza_mcp.services.piazza import PiazzaShapeProfiler
+from tests.support import assert_sensitive_value_absent
 
 
 def test_profiler_reports_aggregate_shapes_without_private_values():
@@ -27,11 +26,9 @@ def test_profiler_reports_aggregate_shapes_without_private_values():
     }
 
     profile = PiazzaShapeProfiler().profile(summaries, thread)
-    serialized = json.dumps(profile)
-
     assert profile["summary_count"] == 1
     assert profile["full_thread_profiled"] is True
     assert profile["post_kind_counts"] == {"question": 2}
     assert profile["child_depth_counts"] == {"1": 1, "2": 1}
     assert profile["html_field_count"] == 1
-    assert private_marker not in serialized
+    assert_sensitive_value_absent(profile, private_marker)

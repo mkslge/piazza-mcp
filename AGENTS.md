@@ -54,6 +54,52 @@ perform lazy configured composition in the domain factory modules.
 - Avoid speculative abstractions or features that were not requested.
 - Every changed line should trace back to the user's request.
 
+## Test Quality Requirements
+
+Every new or changed test must protect a specific behavior, contract,
+boundary, or failure mode. Before treating a test as complete, identify the
+plausible production regression that would make it fail and why existing tests
+do not already provide the same protection.
+
+- Assert externally observable behavior rather than only setup, mock state, or
+  framework behavior.
+- Check expected results against the documented domain contract. Do not turn an
+  unexplained current implementation detail into the oracle.
+- Import-isolation and lazy-configuration tests must execute the import in a
+  clean subprocess. Removing a module from `sys.modules` is not sufficient.
+- Fakes used for more than one call must retain the complete call history, and
+  tests must assert the arguments for every relevant call.
+- Privacy and redaction tests must inject a unique sentinel and assert that the
+  complete sentinel is absent from every returned or logged representation.
+- Find catalog entries by stable identifiers such as tool name. Do not select
+  them by numeric position unless ordering is the behavior under test.
+- Do not add tests that would continue to pass after the behavior named by the
+  test is broken.
+
+Use helpers from `tests/support/` for these patterns when applicable. Run
+`uv run --frozen python scripts/check_test_quality.py tests` before finishing
+test changes.
+Suppress a checker finding only when it is a false positive that cannot be
+expressed with a clearer assertion. Put
+`# test-quality: allow TQxxx - concrete reason` on the flagged or preceding
+line so the exception remains reviewable.
+For an important new test, use `scripts/run_test_challenge.py` to make one
+plausible, syntactically valid production mutation in an isolated copy and
+confirm that the targeted test fails.
+
+## Code Review Rules
+
+For every new or changed test, reviewers must be able to name the production
+regression it detects. Flag tests whose oracle conflicts with the documented
+contract, observes only a mock, depends on incidental ordering, or claims
+privacy or isolation without exercising the relevant boundary.
+
+For nontrivial test changes, request a fresh independent review when agent
+delegation is available and permitted. Give the reviewer the relevant
+specification, production diff, and tests, but not the author's conclusions.
+The reviewer should report the regression each test detects and any test that
+would survive that regression.
+
 ## Verification
 
 Choose checks proportional to the change. CI's primary checks are:
@@ -61,6 +107,7 @@ Choose checks proportional to the change. CI's primary checks are:
 ```bash
 uv lock --check
 uv run --frozen pytest -q
+uv run --frozen python scripts/check_test_quality.py tests
 uv run --frozen python -m compileall -q src/piazza_mcp tests scripts
 uv build
 ```

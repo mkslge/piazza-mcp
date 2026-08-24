@@ -140,6 +140,7 @@ need to install it separately.
 | `list-piazza-posts` | List bounded recent post summaries from one course. |
 | `list-piazza-filtered-posts` | List summaries matching every selected feed filter. |
 | `get-piazza-post` | Retrieve one bounded, normalized thread by post number. |
+| `get-piazza-post-history` | List bounded, identity-free revisions for one post. |
 | `search-piazza-posts` | Search one configured course and return bounded summaries. |
 
 All course-scoped tools accept only IDs configured in `PIAZZA_COURSES`.
@@ -166,6 +167,14 @@ to three sequential read-only requests and intersect post numbers locally.
 Filtered feeds are not paginated, and a combined request is not an atomic
 snapshot. The tool scans at most 500 returned entries per feed and returns at
 most 25 summaries.
+
+### Reading post history
+
+`get-piazza-post-history` returns up to 20 sanitized revisions when Piazza
+includes history in the post response. Revisions omit author, editor, and audit
+metadata. A revision's `sequence` describes its position in the current
+response and is not a stable Piazza revision ID. The response reports whether
+entries are chronological, kept in Piazza's original order, or unavailable.
 
 ## Safety and Limitations
 

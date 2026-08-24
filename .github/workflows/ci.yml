@@ -86,6 +86,9 @@ jobs:
       - name: Install locked dependencies
         run: uv sync --locked --all-extras --dev
 
+      - name: Check test quality anti-patterns
+        run: uv run --frozen python scripts/check_test_quality.py tests
+
       - name: Compile Python sources
         run: uv run --frozen python -m compileall -q src/piazza_mcp tests scripts
 

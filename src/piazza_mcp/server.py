@@ -59,6 +59,17 @@ async def handle_call_tool(
             arguments["post_number"],
         )
 
+    if name == "get-piazza-post-history":
+        required_arguments = ("course_id", "post_number")
+        for argument in required_arguments:
+            if arguments is None or argument not in arguments:
+                raise ValueError(f"Missing required argument: {argument}")
+        return await get_piazza_service().get_post_history(
+            arguments["course_id"],
+            arguments["post_number"],
+            arguments.get("max_revisions", 10),
+        )
+
     if name == "search-piazza-posts":
         required_arguments = ("course_id", "query")
         for argument in required_arguments:

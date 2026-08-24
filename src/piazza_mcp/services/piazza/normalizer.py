@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import datetime
 import re
 from typing import Any
@@ -7,17 +8,22 @@ from bs4 import BeautifulSoup
 from piazza_mcp.models.piazza import (
     MAX_PIAZZA_BODY_LENGTH,
     MAX_PIAZZA_FOLLOWUPS,
+    MAX_PIAZZA_HISTORY_SCAN,
     MAX_PIAZZA_MESSAGE_LENGTH,
     MAX_PIAZZA_MESSAGE_COUNT,
     MAX_PIAZZA_MESSAGES_TOTAL_LENGTH,
     MAX_PIAZZA_NESTING_DEPTH,
+    MAX_PIAZZA_REVISION_BODY_LENGTH,
+    MAX_PIAZZA_REVISION_TOTAL_LENGTH,
     MAX_PIAZZA_SNIPPET_LENGTH,
     MAX_PIAZZA_SUBJECT_LENGTH,
     PiazzaCourse,
+    PiazzaPostHistory,
     PiazzaMessage,
     PiazzaMessageKind,
     PiazzaPostKind,
     PiazzaPostSummary,
+    PiazzaRevision,
     PiazzaThread,
 )
 
@@ -161,6 +167,96 @@ class PiazzaNormalizer:
             source_url=self._source_url(course_id, post_number),
             truncated=truncated,
             skipped_child_count=skipped,
+        )
+
+    def normalize_history(
+        self,
+        raw_post: dict[str, Any],
+        course_id: str,
+        post_number: int,
+        max_revisions: int,
+    ) -> PiazzaPostHistory:
+        history = raw_post.get("history")
+        if not isinstance(history, list) or not history:
+            return PiazzaPostHistory(
+                course_id=course_id,
+                post_number=post_number,
+                history_available=False,
+                ordering="unavailable",
+                revisions=(),
+            )
+
+        revisions: list[PiazzaRevision] = []
+        skipped = 0
+        for raw_revision in history[:MAX_PIAZZA_HISTORY_SCAN]:
+            if not isinstance(raw_revision, dict):
+                skipped += 1
+                continue
+            subject, subject_truncated = self._first_bounded(
+                (raw_revision.get("subject"),),
+                MAX_PIAZZA_SUBJECT_LENGTH,
+            )
+            body, body_truncated = self._first_bounded(
+                (raw_revision.get("content"),),
+                MAX_PIAZZA_REVISION_BODY_LENGTH,
+            )
+            if subject is None and body is None:
+                skipped += 1
+                continue
+            revisions.append(
+                PiazzaRevision(
+                    sequence=0,
+                    subject=subject,
+                    body=body,
+                    created_at=self._timestamp(raw_revision.get("created")),
+                    truncated=subject_truncated or body_truncated,
+                )
+            )
+
+        if revisions and all(
+            revision.created_at is not None for revision in revisions
+        ):
+            ordering = "chronological"
+            revisions.sort(
+                key=lambda revision: self._parsed_timestamp(
+                    revision.created_at
+                )
+            )
+            selected = revisions[-max_revisions:]
+        else:
+            ordering = "piazza"
+            selected = revisions[:max_revisions]
+
+        truncated = (
+            len(history) > MAX_PIAZZA_HISTORY_SCAN
+            or len(revisions) > len(selected)
+        )
+        budgeted: list[PiazzaRevision] = []
+        total_length = 0
+        for revision in selected:
+            revision_length = len(revision.subject or "") + len(
+                revision.body or ""
+            )
+            if total_length + revision_length > MAX_PIAZZA_REVISION_TOTAL_LENGTH:
+                truncated = True
+                break
+            budgeted.append(revision)
+            total_length += revision_length
+
+        sequenced = tuple(
+            replace(revision, sequence=sequence)
+            for sequence, revision in enumerate(budgeted, start=1)
+        )
+        return PiazzaPostHistory(
+            course_id=course_id,
+            post_number=post_number,
+            history_available=True,
+            ordering=ordering,
+            revisions=sequenced,
+            skipped_revision_count=skipped,
+            truncated=(
+                truncated or any(revision.truncated for revision in sequenced)
+            ),
         )
 
     def _normalize_message(
@@ -320,6 +416,12 @@ class PiazzaNormalizer:
         if parsed.tzinfo is None:
             return None
         return parsed.isoformat().replace("+00:00", "Z")[:100]
+
+    @staticmethod
+    def _parsed_timestamp(value: str | None) -> datetime:
+        if value is None:
+            raise ValueError("timestamp is required for chronological ordering")
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
     def _optional_text(self, value: Any, limit: int) -> str | None:
         text = self._plain_text(value)

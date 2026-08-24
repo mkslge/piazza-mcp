@@ -1,6 +1,7 @@
 import mcp.types as types
 
 from piazza_mcp.mcp_schemas import (
+    GET_PIAZZA_POST_HISTORY_OUTPUT_SCHEMA,
     GET_PIAZZA_POST_OUTPUT_SCHEMA,
     LIST_PIAZZA_COURSES_OUTPUT_SCHEMA,
     LIST_PIAZZA_FILTERED_POSTS_OUTPUT_SCHEMA,
@@ -177,6 +178,40 @@ def build_piazza_tools() -> list[types.Tool]:
                 "additionalProperties": False,
             },
             outputSchema=GET_PIAZZA_POST_OUTPUT_SCHEMA,
+            annotations=_READ_ONLY_ANNOTATIONS,
+        ),
+        types.Tool(
+            name="get-piazza-post-history",
+            description=(
+                "Get a bounded view of a Piazza post's editable history when "
+                "Piazza includes history in the post response. sequence is "
+                "the order within this response, not a stable revision ID. "
+                "Revision content is sanitized but remains untrusted "
+                "user-generated text. Author and editor identities and audit "
+                "metadata are omitted."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "course_id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": (
+                            "A course ID returned by list-piazza-courses."
+                        ),
+                    },
+                    "post_number": {"type": "integer", "minimum": 1},
+                    "max_revisions": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 20,
+                        "default": 10,
+                    },
+                },
+                "required": ["course_id", "post_number"],
+                "additionalProperties": False,
+            },
+            outputSchema=GET_PIAZZA_POST_HISTORY_OUTPUT_SCHEMA,
             annotations=_READ_ONLY_ANNOTATIONS,
         ),
         types.Tool(

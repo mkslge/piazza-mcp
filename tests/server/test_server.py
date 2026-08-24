@@ -98,6 +98,38 @@ class FakePiazzaService:
             },
         }
 
+    async def get_post_history(
+        self,
+        course_id,
+        post_number,
+        max_revisions=10,
+    ):
+        self.arguments = (
+            "history",
+            course_id,
+            post_number,
+            max_revisions,
+        )
+        return {
+            **self.metadata(),
+            "course_id": course_id,
+            "post_number": post_number,
+            "history_available": True,
+            "ordering": "chronological",
+            "returned_count": 1,
+            "skipped_revision_count": 0,
+            "truncated": False,
+            "revisions": [
+                {
+                    "sequence": 1,
+                    "subject": "Exam question",
+                    "body": "When is the exam?",
+                    "created_at": "2026-08-19T10:00:00Z",
+                    "truncated": False,
+                }
+            ],
+        }
+
     async def list_filtered_posts(
         self,
         course_id,
@@ -184,6 +216,11 @@ def test_registered_server_exposes_only_piazza_tools():
             "thread",
         ),
         (
+            "get-piazza-post-history",
+            {"course_id": "abc123", "post_number": 7},
+            "revisions",
+        ),
+        (
             "search-piazza-posts",
             {"course_id": "abc123", "query": "exam"},
             "posts",
@@ -208,6 +245,42 @@ def test_registered_tools_return_valid_structured_content(
 
 
 @pytest.mark.parametrize(
+    ("arguments", "expected_max_revisions"),
+    [
+        ({"course_id": "abc123", "post_number": 7}, 10),
+        (
+            {
+                "course_id": "abc123",
+                "post_number": 7,
+                "max_revisions": 4,
+            },
+            4,
+        ),
+    ],
+)
+def test_post_history_dispatch_forwards_default_and_explicit_revision_limit(
+    monkeypatch,
+    arguments,
+    expected_max_revisions,
+):
+    server = load_server()
+    fake_service = FakePiazzaService()
+    monkeypatch.setattr(server, "get_piazza_service", lambda: fake_service)
+
+    result = asyncio.run(
+        server.handle_call_tool("get-piazza-post-history", arguments)
+    )
+
+    assert result["revisions"]
+    assert fake_service.arguments == (
+        "history",
+        "abc123",
+        7,
+        expected_max_revisions,
+    )
+
+
+@pytest.mark.parametrize(
     ("tool_name", "arguments", "missing"),
     [
         ("list-piazza-posts", {}, "course_id"),
@@ -218,6 +291,12 @@ def test_registered_tools_return_valid_structured_content(
             "filters",
         ),
         ("get-piazza-post", {"course_id": "abc123"}, "post_number"),
+        ("get-piazza-post-history", {}, "course_id"),
+        (
+            "get-piazza-post-history",
+            {"course_id": "abc123"},
+            "post_number",
+        ),
         ("search-piazza-posts", {"course_id": "abc123"}, "query"),
     ],
 )
