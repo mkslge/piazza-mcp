@@ -1,10 +1,10 @@
 import pytest
 
-from course_mcp.models.piazza import (
+from piazza_mcp.models.piazza import (
     MAX_PIAZZA_BODY_LENGTH,
     MAX_PIAZZA_MESSAGE_LENGTH,
 )
-from course_mcp.services.piazza.normalizer import (
+from piazza_mcp.services.piazza.normalizer import (
     PiazzaNormalizationError,
     PiazzaNormalizer,
 )

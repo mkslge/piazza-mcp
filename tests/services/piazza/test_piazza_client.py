@@ -6,8 +6,8 @@ from piazza_api.exceptions import NotAuthenticatedError
 import pytest
 import requests
 
-from course_mcp.config import PiazzaConfig
-from course_mcp.services.piazza.client import (
+from piazza_mcp.config import PiazzaConfig
+from piazza_mcp.services.piazza.client import (
     PiazzaClient,
     PiazzaAuthenticationError,
     PiazzaResponseError,

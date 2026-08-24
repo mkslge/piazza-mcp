@@ -87,7 +87,7 @@ jobs:
         run: uv sync --locked --all-extras --dev
 
       - name: Compile Python sources
-        run: uv run --frozen python -m compileall -q src/course_mcp tests scripts
+        run: uv run --frozen python -m compileall -q src/piazza_mcp tests scripts
 
   package:
     name: Build and smoke-test package
@@ -130,8 +130,8 @@ jobs:
           (
             cd "$smoke_root"
             "$smoke_root/venv/bin/python" -c \
-              "import course_mcp; import course_mcp.server"
-            test -x "$smoke_root/venv/bin/course-mcp"
+              "import piazza_mcp; import piazza_mcp.server"
+            test -x "$smoke_root/venv/bin/piazza-mcp"
           )
 
       - name: Upload distributions
@@ -141,7 +141,7 @@ jobs:
           github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: course-mcp-${{ github.sha }}
+          name: piazza-mcp-${{ github.sha }}
           path: dist/*
           if-no-files-found: error
           retention-days: 14

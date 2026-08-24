@@ -1,16 +1,14 @@
 [project]
-name = "course-mcp"
+name = "piazza-mcp"
 version = "0.1.0"
-description = "MCP server for course files, UMD Canvas work, and Piazza discussions"
+description = "Read-only MCP server for configured Piazza discussions"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
  "beautifulsoup4>=4.13,<5",
- "httpx>=0.28.1",
- "icalendar>=7.2.2",
  "mcp>=1.28.1,<2",
  "piazza-api>=0.16.0,<0.17.0",
- "pypdf>=6.14.2",
+ "requests>=2.32,<3",
 ]
 [[project.authors]]
 name = "mkslge"
@@ -30,4 +28,4 @@ requires = [ "uv_build>=0.11.28,<0.12.0",]
 build-backend = "uv_build"
 
 [project.scripts]
-course-mcp = "course_mcp:main"
+piazza-mcp = "piazza_mcp:main"

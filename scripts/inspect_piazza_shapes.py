@@ -4,8 +4,8 @@ import asyncio
 import json
 import sys
 
-from course_mcp.config import get_piazza_config
-from course_mcp.services.piazza import (
+from piazza_mcp.config import get_piazza_config
+from piazza_mcp.services.piazza import (
     PiazzaClient,
     PiazzaClientError,
     PiazzaShapeProfiler,

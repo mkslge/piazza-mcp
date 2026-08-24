@@ -1,6 +1,6 @@
 import pytest
 
-import course_mcp.config.piazza as piazza_config_module
+import piazza_mcp.config.piazza as piazza_config_module
 
 
 PIAZZA_ENV_VARS = ("PIAZZA_EMAIL", "PIAZZA_PASSWORD", "PIAZZA_COURSES")

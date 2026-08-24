@@ -1,6 +1,6 @@
 import json
 
-from course_mcp.services.piazza import PiazzaShapeProfiler
+from piazza_mcp.services.piazza import PiazzaShapeProfiler
 
 
 def test_profiler_reports_aggregate_shapes_without_private_values():

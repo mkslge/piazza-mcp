@@ -3,9 +3,9 @@ from types import MappingProxyType
 
 import pytest
 
-from course_mcp.config import PiazzaConfig
-from course_mcp.services.piazza import PiazzaClientError, PiazzaNormalizer
-from course_mcp.services.piazza.service import PiazzaService
+from piazza_mcp.config import PiazzaConfig
+from piazza_mcp.services.piazza import PiazzaClientError, PiazzaNormalizer
+from piazza_mcp.services.piazza.service import PiazzaService
 
 
 class FakeClock:
